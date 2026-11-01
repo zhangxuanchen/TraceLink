@@ -1,6 +1,6 @@
 # TraceLink 测试用例（M0–M5）
 
-按 `docs/DESIGN.md` 第 10 章的验收条件逐条落成用例，供每个里程碑「先写用例、再写实现、跑完用例再宣布完成」。M0–M4 的用例已在 2026-11-01 实际跑通（M4-03 需模型密钥，本机按降级口径记为待复跑）；M5 的用例先作为实现契约，实现完成前状态保持「待实现」。
+按 `docs/DESIGN.md` 第 10 章的验收条件逐条落成用例，供每个里程碑「先写用例、再写实现、跑完用例再宣布完成」。M0–M5 的用例已在 2026-11-01 实际跑通（M4-03 与 TC-M5-09 的模型可用路径需 `ARK_API_KEY`，本机按降级口径记为待复跑）。M5 的接口层用例由 `scripts/acceptance-m5.sh` 跑两轮（66 通过 / 0 失败 / 1 跳过），浏览器层由 `scripts/e2e-m5.mjs` 跑 31 项。
 
 ## 1 使用说明
 
@@ -423,61 +423,64 @@ delete from daily_report; delete from task_metric; delete from export_task;
 
 ---
 
-## 10 M5：会话、评价与建议（⏳ 待实现）
+## 10 M5：会话、评价与建议（✅ 已跑通；模型可用路径待密钥复跑）
+
+可复跑入口：`bash scripts/acceptance-m5.sh`（TC-M5-01~09 接口层，连续两轮 66 通过 / 0 失败 / 1 跳过）；
+`node scripts/e2e-m5.mjs`（浏览器层 31 项，需前端 dev server）。
 
 **TC-M5-01 会话归属与归档**
 - 来源：CHT-1/2；TL-4032 / TL-4091
 - 步骤：A 建会话 → B 取 A 的会话与历史 → A 归档后再提问
 - 预期：B 取 → `TL-4032`；归档后提问 → `TL-4091`；列表只回本人会话
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——`xuwei` 读 `admin` 会话 `403 TL-4032`；归档返回 `ARCHIVED`，再提问 `409 TL-4091`；双方会话列表只回本人
 
 **TC-M5-02 流式回答与工具调用可见**
 - 来源：CHT-3；5.2 事件流
 - 步骤：在会话里问「生产部这周还有几张单没验收」
 - 预期：事件序列含 `retrieval`、`tool_call`（工具名与入参摘要、结果条数）、`delta`、`citations`、`done`；工具查询只回调用人范围内的数据
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——一次组合问题触发 `task_query`/`stats_query`/`employee_query`/`knowledge_search` 四类工具；事件顺序 `retrieval→tool_call→delta→citations→done`；`done.answerChars>0`；浏览器端能看到工具 chips 与入参 JSON
 
 **TC-M5-03 四类只读工具的数据范围**
 - 来源：4.9；M5 验收
 - 步骤：分别触发工单查询、人员负载、知识检索、指标查询四类工具，均以执行者身份
 - 预期：四类工具都被调用到；返回条数与执行者可见范围一致；越权输入被裁剪而非报错
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——执行者问同一句：`task_query` 入参 `"clamped":true` 且不再带越权 `deptId=2`；`stats_query` 只带本人 `employeeId`；`employee_query` 的 `names=[]`；四类工具均被触发
 
 **TC-M5-04 引用回溯**
 - 来源：CHT-4；M5 验收第 1 条
 - 步骤：点开回答中的每条引用
 - 预期：跳到原文对应文档与切片位置；会话历史里引用可再次点开
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——回答带 3 条引用；`GET /kb/chunks/{id}` 返回原文且正文非空；会话历史消息里的 `citations` 持久化，可再次点开
 
 **TC-M5-05 人员与任务评价可下钻证据**
 - 来源：EVL-1/2；M5 验收第 3 条
 - 步骤：触发一次评价 → 打开某人评价 → 点证据
 - 预期：每个结论带证据记录链接（工单、追踪记录），可跳转；周期唯一，重复触发返回首次结果
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——人员评价六维分数 + `evidence.taskIds` 工单链接；任务评价四维 + `evidence.taskId`；同周期第二次触发 `employeeCreated=0` 且 `skipped>0`；申诉后状态 `APPEALED`、理由写入 `evidence.appealReason` 并写 `EVAL_APPEAL` 审计
 
 **TC-M5-06 评价口径与统计一致性**
 - 来源：4.9；Q12 A+B
 - 步骤：比对评价里的完成/按时/退回数字与 `stats/person`
 - 预期：同一区间同一人数字一致，不允许两套口径
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——脚本先重算 2026-10 评价，再逐人比对 `created/due/done/open/overdue/rejected/onTimeRate/evidenceRate`，14 人 0 处不一致
 
 **TC-M5-07 五类建议与采纳**
 - 来源：AI-1/2；M5 验收第 2 条
 - 步骤：生成建议 → 采纳一条建单类建议 → 采纳一条改期类建议
 - 预期：采纳执行确定性动作（建单走 `TSK-1`、改期走改期接口），不直接改库；未采纳的建议不产生任何数据变化
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——五类建议均落库（脚本造一张无主责在办单验证 DISPATCH 候选）；采纳 ACTION 返回 `TASK_CREATED`，新单标题含「复盘：」、状态 `PENDING`、写 `CREATE` 审计；采纳 DUE_DATE 返回 `RESCHEDULED`，`plan_end` 变化、`delay_count+1`、工单审计 after 含 `RESCHEDULE`
 
 **TC-M5-08 采纳后可审计**
 - 来源：M5 验收第 2 条；R8
 - 步骤：查 `audit_log` 与 `ai_suggestion`
 - 预期：建议带模型名、提示词版本、token 数、耗时；采纳记录人、时间与被采纳对象 ID；改动可在工单时间线看到
-- 状态：⏳
+- 状态：✅ 通过（2026-11-01）——`ai_suggestion` 行含 `model_name/prompt_ver/token_in/token_out/latency_ms/accepted_by/accepted_at/accept_result`；`accept_result` 记录 `resultType/objectId/objectNo`；写 `SUGGESTION_ACCEPT` 审计
 
 **TC-M5-09 降级标记**
 - 来源：4.9「失败两次降级为规则结果并标记 degraded」
 - 步骤：让模型返回非法 JSON 两次
 - 预期：返回规则结果并 `degraded=true`，页面标明来源；不重试第三次，不影响其他请求
-- 状态：⏳
+- 状态：✅ 降级路径通过（2026-11-01）：未配置 `ARK_API_KEY` 时 `done.degraded=true`、`model=RULE`，浏览器标注「规则回答（降级）」；降级后同会话再问事件顺序完整。⏳ 模型可用路径：配置 `ARK_API_KEY` 后复跑本项，断言 `degraded=false` 且 `model!=RULE`
 
 ---
 

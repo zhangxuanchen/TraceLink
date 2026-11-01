@@ -14,4 +14,7 @@ public interface TaskAssigneeRepository {
     List<TaskAssignee> listByTaskIds(List<Long> taskIds);
 
     boolean exists(Long taskId, Long employeeId);
+
+    /** 评价「协办力」用：本人以协办身份参与过的工单数 */
+    int countByEmployee(Long employeeId);
 }

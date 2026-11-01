@@ -1,6 +1,6 @@
 # TraceLink 工单系统设计文档
 
-版本 v1.1　编写日期 2026-11-01　状态 设计基线（Q1–Q15 全部确认；第 11 章已收口；M1 工单与追踪、M2 导入导出与统计、M3 完成地图、M4 知识库与带引用问答已实现并通过验收，M4-03 待模型密钥环境复跑）
+版本 v1.1　编写日期 2026-11-01　状态 设计基线（Q1–Q15 全部确认；第 11 章已收口；M1 工单与追踪、M2 导入导出与统计、M3 完成地图、M4 知识库与带引用问答、M5 会话与评价建议已实现并通过验收，M4-03/M5-09 的模型路径待密钥环境复跑）
 
 ## 1 文档定位与需求来源
 
@@ -739,6 +739,19 @@ sequenceDiagram
 
 建议分五类：派工建议（新工单无主责时给三个候选，按部门、负载、历史同类成功率排序）、措施建议（报同类问题时召回历史措施并给出历史耗时）、期限建议（按同类工单时长的中位数与八成位给建议期限）、升级建议（逾期或反复改期时按上级链给升级对象）、制度缺口建议（同类问题三十天内出现三次以上时提出）。
 
+M5 实现口径（把上面的设计落到代码时定下的取值，均已在验收里核过）：
+
+- 会话归档走 `POST /chat/sessions/{id}/archive`，置 `ARCHIVED`；归档后提问返回 `TL-4091`。列表只回归属人会话，跨用户读历史返回 `TL-4032`，不存在「本部门管理者可读」的例外（Q4 的口径也按此收紧）。
+- 模型不可用或输出不合法时不再以 `503 TL-5031` 关闭事件流：工具结果与检索片段照常下发，回答降级为规则拼装，`done.degraded=true`、`model=RULE`，页面标「规则回答（降级）」。降级不是失败，用户仍拿到带引用的答案；`TL-5031` 只保留给知识库单轮问答。
+- 人员六维的实际算式固定为：交付力 = 完成率与按时率各半；结果留痕 = 结果记录率；响应力 = 100 − 逾期占在办比；解决力 = 100 − 退回占完成比；协办力 = 协办次数 × 20（上限 100）；规范性 = 100 − 改期占完成比。权重读 `sys_config` 的 `eval.weight.*`，综合分按权重加权。
+- 任务四维（重要、复杂、健康、质量）取等权平均，因为四项都是 0–100 的分数且尚无试点分布可依；复盘卡以平均分呈现，单维分数与依据仍逐项可见。
+- 周期唯一靠 `uk_eval(target_type, target_id, period)`：重复触发只累加 `skipped`，不覆盖首次结果。
+- 申诉把理由写进 `evidence.appealReason`（同时记 `appealedAt`、`appealedBy`），状态置 `APPEALED` 并写 `EVAL_APPEAL` 审计；不改分数，复核由管理者线下判断。
+- 派工建议在没有无主责在办单时也留一条「未生成」的 notes，方便解释队列为空；有单但部门内无候选人时仍落建议，摘要写明「当前部门没有可用候选人」。
+- 措施建议的建单草稿受 R1 约束：来源单负责人与执行人相同时，改选承办部门树内、在职、非本人的负载最低者；仍找不到人则跳过该单并在 notes 说明，避免产出「点了采纳必然 422」的建议。
+- 采纳 `AI-2` 由应用服务调用既有用例（`TSK-1` 建单、改期、催办），把 `resultType/objectId/objectNo` 写进 `accept_result`；`POLICY_GAP` 只记 `RECORDED`，不产生业务写入。
+- 幂等键在会话侧保留 200 条重放记录，同键返回同一轮回答，不重复计费。
+
 ### 4.9 AI 编排模块
 
 职责：把模型能力组织成可复用、可校验、可计费追踪的 Agent。
@@ -873,11 +886,16 @@ sequenceDiagram
 | CHT-1 | `POST /chat/sessions` | 新建会话 | 任意登录用户 | — |
 | CHT-2 | `GET /chat/sessions` | 我的会话列表 | 本人 | — |
 | CHT-3 | `POST /chat/sessions/{id}/messages` | 提问并以事件流接收回答 | 会话归属人 | 支持幂等键 |
-| CHT-4 | `GET /chat/sessions/{id}/messages` | 会话历史与引用 | 归属人或本部门管理者 | — |
+| CHT-4 | `GET /chat/sessions/{id}/messages` | 会话历史与引用 | 归属人 | — |
+| CHT-5 | `POST /chat/sessions/{id}/archive` | 归档会话 | 归属人 | — |
 | EVL-1 | `POST /evaluations/run` | 触发人员与任务评价 | 管理者 | 周期唯一 |
 | EVL-2 | `GET /evaluations` | 评价列表与证据下钻 | 管理者 | — |
-| AI-1 | `GET /ai/suggestions` | 建议列表 | 按类型 | — |
-| AI-2 | `POST /ai/suggestions/{id}/accept` | 采纳建议 | 按类型 | — |
+| EVL-3 | `GET /evaluations/{id}` | 单条评价详情（分数、证据、申诉） | 管理者 | — |
+| EVL-4 | `POST /evaluations/{id}/appeal` | 提交申诉 | 管理者 | — |
+| AI-1 | `GET /ai/suggestions` | 建议列表 | 按类型与数据范围 | — |
+| AI-2 | `POST /ai/suggestions/{id}/accept` | 采纳建议，执行确定性动作 | 按类型与数据范围 | 状态机保护 |
+| AI-3 | `POST /ai/suggestions/run` | 生成五类建议 | 管理者 | 同类型同对象只留一条待确认 |
+| AI-4 | `GET /ai/suggestions/{id}` | 单条建议详情与依据 | 按数据范围 | — |
 | SYS-1 | `POST /auth/login` | 登录 | 公开 | — |
 | SYS-2 | `GET /audit-logs` | 审计 | 系统管理员 | — |
 
@@ -943,8 +961,8 @@ sequenceDiagram
 | 用途 | 会话内提问，事件流返回回答、引用与工具调用；描述是新事项时只给建单入口提示，不产出草稿 |
 | 鉴权 | Bearer；需 `chat:ask`；调用人须为会话归属人，工具查询自动带上调用人数据范围 |
 | 请求体 | `question` 字符串 必填 1–1000 字；`scope` 对象 可选 含 `deptId` 与 `taskTypes`，不传取本部门；`allowTools` 布尔 可选 默认 true，关闭时只走知识检索问答 |
-| 成功响应 | `200 text/event-stream`；事件序列 `retrieval`（切片 ID 与工具名）、`tool_call`（工具名 入参摘要 结果条数）、`delta`（增量文本）、`citations`（引用数组）、`hint`（可选 建单入口提示与建议 ID）、`done` |
-| 失败响应 | `403 TL-4032` 会话不属于调用人；`409 TL-4091` 会话已归档；`422 TL-4228` 问题为空或超出长度；`503 TL-5031` 模型不可用，事件流内先发 `error` 再关闭 |
+| 成功响应 | `200 text/event-stream`；事件序列 `retrieval`（检索来源与条数）、`tool_call`（工具名、入参、结果条数与耗时）、`delta`（增量文本）、`citations`（引用数组）、`hint`（可选 建单入口提示与建议 ID）、`done`（`answerChars/degraded/model/latencyMs/promptVer`） |
+| 失败响应 | `403 TL-4032` 会话不属于调用人；`409 TL-4091` 会话已归档；`422 TL-4228` 问题为空或超出长度；模型不可用不报错，按降级规则回答并在 `done` 标 `degraded=true`、`model=RULE`（M5 实现口径） |
 | 幂等 | 支持 `Idempotency-Key`，同键重放返回同一轮回答，不重复计费 |
 
 | 字段 | 内容 |
@@ -1511,7 +1529,7 @@ CREATE TABLE evaluation (
   period       VARCHAR(16)  NOT NULL COMMENT '如 2026-10 或 2026Q4',
   score        DECIMAL(5,2) NULL,
   scores       JSON         NULL COMMENT '分维度得分',
-  evidence     JSON         NULL COMMENT '证据 工单与记录 ID',
+  evidence     JSON         NULL COMMENT '证据 工单与记录 ID；申诉时追加 appealReason/appealedAt/appealedBy',
   confidence   DECIMAL(4,2) NULL COMMENT '样本量决定的置信度',
   sample_cnt   INT          NULL,
   status       VARCHAR(16)  NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT PUBLISHED APPEALED',
@@ -1521,16 +1539,22 @@ CREATE TABLE evaluation (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评价 人与任务共用一张表';
 
 CREATE TABLE ai_suggestion (
-  id          BIGINT PRIMARY KEY AUTO_INCREMENT,
-  type        VARCHAR(16) NOT NULL COMMENT 'NEXT_STEP URGE RISK TRAINING DUTY',
-  target_type VARCHAR(16) NOT NULL,
-  target_id   BIGINT      NOT NULL,
-  payload     JSON        NOT NULL COMMENT '建议正文与可执行动作',
-  evidence    JSON        NULL COMMENT '依据 工单 记录 指标',
-  status      VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING ACCEPTED IGNORED',
-  model_name  VARCHAR(64) NULL,
-  prompt_ver  VARCHAR(32) NULL,
-  created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+  type         VARCHAR(16)  NOT NULL COMMENT 'DISPATCH ACTION DUE_DATE ESCALATE POLICY_GAP',
+  target_type  VARCHAR(16)  NOT NULL COMMENT 'TASK DEPT EMPLOYEE',
+  target_id    BIGINT       NOT NULL,
+  payload      JSON         NOT NULL COMMENT '建议正文与可执行动作',
+  evidence     JSON         NULL COMMENT '依据 工单 记录 指标',
+  status       VARCHAR(16)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING ACCEPTED IGNORED',
+  model_name   VARCHAR(64)  NULL,
+  prompt_ver   VARCHAR(32)  NULL,
+  token_in     INT          NULL,
+  token_out    INT          NULL,
+  latency_ms   INT          NULL,
+  accepted_by  BIGINT       NULL COMMENT '采纳人',
+  accepted_at  DATETIME     NULL,
+  accept_result VARCHAR(512) NULL COMMENT 'resultType/objectType/objectId/objectNo 与说明',
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_sug_target (target_type, target_id, status),
   KEY idx_sug_status (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 建议与待确认';
@@ -2064,7 +2088,7 @@ CREATE TABLE job_task (
 | `target_type` 与 `target_id` | 评价对象是人还是工单 | 一张表服务两种对象，评分与证据结构一致 |
 | `period` | 评价周期，月或季 | 趋势对比；同一周期只一份 |
 | `score` 与 `scores` | 总分与分维度得分 | 评价卡与趋势图；下钻看哪一维偏低 |
-| `evidence` | 证据 ID 数组 | 点开可看依据；没有证据的评价不允许发布 |
+| `evidence` | 证据 ID 数组；申诉时追加 `appealReason/appealedAt/appealedBy` | 点开可看依据；没有证据的评价不允许发布；申诉理由与分数一起复核 |
 | `confidence` 与 `sample_cnt` | 样本量决定的置信度 | 低样本只显示区间不给排名，避免用两件事评价一个人 |
 | `status` | 草稿、已发布、申诉中 | 申诉期锁定分数；发布前可改分但要留理由 |
 | 唯一键 `uk_eval` 与索引 `idx_eval_period` | 一对象一周期一份、按周期取全部 | 生成时幂等；周期对比页 |
@@ -2073,12 +2097,14 @@ CREATE TABLE job_task (
 
 | 字段 | 为什么要它 | 什么时候用到 |
 |---|---|---|
-| `type` | 建议种类：下一步、催办、风险、培训、派工参考 | 不同种类走不同提示词与不同动作 |
+| `type` | 建议种类：派工、措施、期限、升级、制度缺口 | 不同种类走不同动作；派工/措施/期限可一键执行，制度缺口只登记 |
 | `target_type` 与 `target_id` | 针对谁或哪张工单 | 详情页右栏按对象取建议 |
 | `payload` | 建议正文与可执行动作 | 采纳后由应用服务按动作调用接口，模型不直接写库，所以同一动作可以走人工触发也可以走批量重放 |
 | `evidence` | 依据的工单、记录、指标 ID | 建议带依据才可判断；拒绝时也留痕 |
 | `status` | 待确认、已采纳、已忽略 | 采纳率是 AI 是否可用的判据之一；待确认队列按它筛 |
 | `model_name` 与 `prompt_ver` | 生成来源 | 版本切换后对比采纳率 |
+| `token_in` `token_out` `latency_ms` | 生成成本与耗时 | 与建议采纳率一起看性价比 |
+| `accepted_by` `accepted_at` `accept_result` | 谁在什么时候采纳、执行后落到哪个对象 | 采纳动作可审计；`accept_result` 记录 `resultType/objectId/objectNo`，页面据此跳转新建或改期的工单 |
 | 索引 `idx_sug_target` 与 `idx_sug_status` | 详情页取待确认、运营页看待处理量 | 建议卡片；待确认队列 |
 
 #### 6.3.8 参数配置与审计
@@ -2219,7 +2245,7 @@ RAGFlow 一侧的失败按四类分开。服务不可达时检索返回 `TL-5031
 
 导入失败的处理粒度到行，不到批次。单行解析失败写 `level=ERROR` 并跳过，批次继续；批次级失败（文件损坏、无明细表头）整体置 `FAILED`。已确认批次的撤回按 `import_row.task_id` 反查逻辑删除，并把批次置 `REVOKED`。
 
-会话平台的失败处理与其它链路不同，因为它在等用户，不能靠重试解决。模型不可用时事件流内先发 `error` 再关闭，页面提示改走知识库检索或稍后重发；检索可用但模型不可用时只返回切片与引用，不生成没有依据的结论；工具调用失败的那一轮回答不落历史，用户可原地重发，避免半截回答被后来的人当成结论。每一轮的 token 与耗时记在 `chat_message`，模型已消耗输入却生成失败时同样记账，否则成本会漏。
+会话平台的失败处理与其它链路不同，因为它在等用户，不能靠重试解决。M5 实现改了两处：模型不可用不再以 `error TL-5031` 关闭事件流，而是先照常下发工具结果与引用，再用规则拼装回答并 `done.degraded=true, model=RULE`，页面标「规则回答（降级）」，用户至少拿到带依据的答案；工具调用失败只在 `tool_call` 的 `resultCount=0` 上体现，该轮仍落历史，避免半截回答被后来的人当成结论（知识库单轮问答 `KB-3` 仍保留 `TL-5031` 的错误事件，两处语义分开）。每一轮的 token 与耗时记在 `chat_message`，模型已消耗输入却生成失败时同样记账，否则成本会漏。
 
 催办与提醒的重复抑制：同一工单同一层级提醒二十四小时内只发一次，幂等键记在 `job_task`，避免连续扫描造成轰炸。
 
@@ -2582,6 +2608,8 @@ M2 的验收同样走通，用的是 83 MB 的真实样本（10 个工作表）�
 M3 的验收也已走通，口径与实现一致：九条条件与权重落在 `gate_rule`（4 种类型共 15 行，每类型权重合计一百），单工单完成地图是实时算式，部门矩阵、缺口排行与事项地图读 `task_gate_snapshot` 日快照。权重改库即时生效（巡查类 G6 由 10 改 20 后同一张单完成率 4%→7%，无需重启）；`PENDING` 单不写追踪记录时 G1 未达成，首条 `PROGRESS` 落库后 G1 立刻达成（派工只改主责与期限，不改状态）；退回后 G9 回到未达成且 `hint` 带退回理由。快照任务造 1050 张在办单实测约 1 秒（976 ms–1.2 s），`cellCount` 恒等于 `taskCount × 9`，超过 180 天的明细被裁剪、`gate_gap_daily` 保留聚合计数。两级提醒按昨日快照滞留天数去重：C 单满三日只发承担者、B 单满七日发承担者与负责人，共 3 条；同日重跑 0 条。浏览器端到端（`scripts/e2e-browser.mjs`，32 项断言）另核过四视图、详情九条件与「去处理」跳转、执行者只读视角，接口侧另由 `scripts/acceptance-m3.sh` 的 108 项断言兜住。这一轮修掉一处会让提醒漏发的缺陷：原唯一键 `(task_id, gate_code, level, episode_start)` 在七日级同时插入承担者与负责人时撞键，V8 迁移把 `recipient_id` 加入唯一键，`exists` 判重也改为按收件人。
 
 M4 的验收在未装 RAGFlow、未配 `ARK_API_KEY` 的本机环境按降级口径走通：解析走本地解析器、检索走 ngram 全文，`retrieved` 一律标 `LOCAL`，页面顶部提示降级。上传侧验证了 `PENDING → READY` 轮询、哈希复用不重建切片、空文档置 `FAILED` 且原因可读并再次重试、PDF 抽取到切片；历史沉淀从一张走到 `DONE` 的产线整改单生成 `HISTORY` 文档（`source_ref` 记工单号），二次沉淀 `created=0`、`skipped` 与 `scanned` 相等；以「毛刺超标怎么处理」检索命中历史措施片段，点开引用能看到含「去毛刺」「毛刺」的原文。范围隔离用纯字母唯一标识验证：管理员命中生产部私有制度，质量部执行者同词零命中，显式带 `deptId=2` 仍零命中，直接取该切片返回 `TL-4032`，文档列表也不泄露标题。重解析后旧片 `superseded=1`、新片有效，旧切片 ID 仍可取原文并标「旧快照」；文档处于 `PARSING` 时再次触发同步返回 `TL-4091`。问答侧核了事件顺序 `retrieved`、`delta`、`citations`、`done` 的契约与 `TL-4228`（2 字、501 字、空白），无密钥时在 `retrieved` 之后发 `error TL-5031` 再关闭，页面仍展示召回切片。`scripts/acceptance-m4.sh` 77 项断言 0 失败，`M4-03` 真实模型生成答案与引用因缺密钥标记为待复跑；浏览器端到端扩到 55 项断言，把上传、检索取原文、问答降级提示、历史沉淀与执行者零命中一并走了一遍。这一轮修掉两处会让用例误判的问题：MySQL ngram 是 OR 语义，纯数字标识会命中文档里的日期串，范围用例改用纯字母唯一标识；历史样本工单的主责须属于承办部门（否则 `TL-4221`），且提交验收前必须有结果类追踪记录。
+
+M5 的验收在未配 `ARK_API_KEY` 的本机环境按降级口径跑通：一次组合提问同时触发 `task_query`、`stats_query`、`employee_query`、`knowledge_search` 四类工具，事件顺序 `retrieval → tool_call → delta → citations → done`，回答带 3 条引用且切片可取原文、会话历史可再次点开；执行者问同一句时越权部门被裁掉（`clamped=true`），统计只回本人聚合。会话归属与归档按 `TL-4032`/`TL-4091` 核过；跨角色导航上，管理者两面都能看，负责人只有建议队列，执行者不出现复盘入口。评价侧重算 2026-10 的 14 名人员与 17 张任务单，人员六维与任务四维都能下钻证据，重复触发只记 `skipped`；评价里的 `created/due/done/open/overdue/rejected/onTimeRate/evidenceRate` 与 `stats/person` 同区间逐人比对 0 处不一致；申诉后状态 `APPEALED`、理由落 `evidence.appealReason` 并写 `EVAL_APPEAL` 审计。建议侧五类均落库，采纳一条措施建议返回 `TASK_CREATED`（新单进 `PENDING` 并写 `CREATE` 审计），采纳一条期限建议返回 `RESCHEDULED`（期限变化、改期计数 +1、审计 after 含 `RESCHEDULE`），建议行记模型名、提示词版本、token、耗时、采纳人与 `accept_result`，并写 `SUGGESTION_ACCEPT` 审计。`scripts/acceptance-m5.sh` 连续两轮 66 通过 / 0 失败 / 1 跳过；浏览器侧 `node scripts/e2e-m5.mjs` 31/31 通过。这一轮修掉三处会让验收误判的问题：申诉原先只改状态导致理由永远为空；措施建议在来源单负责人与执行人相同时会产出「一采纳就 422」的草稿；待确认队列里的旧建议会盖住新生成的结果。
 
 后续要观察的三件事不是待确认项，而是试点期的校准依据：逾期池里的单是否真的变少、缺口提醒是否有人响应、会话里的提问是否被带引用的回答接住（第 10 章的试点判据）。
 

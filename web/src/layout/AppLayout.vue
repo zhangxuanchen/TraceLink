@@ -9,7 +9,7 @@
         </div>
       </div>
       <nav class="nav">
-        <router-link v-for="item in menus" :key="item.name" :to="{ name: item.name }" class="nav-item"
+        <router-link v-for="item in visibleMenus" :key="item.name" :to="{ name: item.name }" class="nav-item"
                      :class="{ 'nav-item-off': item.phase }">
           <span class="nav-text">{{ item.title }}</span>
           <span v-if="item.phase" class="nav-phase">{{ item.phase }}</span>
@@ -46,10 +46,11 @@ const menus = [
   { name: 'employees', title: '人员管理' },
   { name: 'tasks', title: '工单中心' },
   { name: 'stats', title: '统计看板' },
+  { name: 'review', title: '复盘与建议', roles: ['SYS_ADMIN', 'MANAGER', 'OWNER'] },
   { name: 'import', title: '导入导出' },
   { name: 'map', title: '完成地图' },
   { name: 'kb', title: '知识库' },
-  { name: 'chat', title: '会话助手', phase: 'M5' }
+  { name: 'chat', title: '会话助手' }
 ]
 
 const user = computed(() => {
@@ -59,6 +60,13 @@ const user = computed(() => {
     return {}
   }
 })
+
+/** 评价只对管理者开放；负责人只能看建议队列，执行者不出现复盘入口 */
+const visibleMenus = computed(() => menus.filter((item) => {
+  if (!item.roles) return true
+  const roles = user.value.roles || []
+  return item.roles.some((role) => roles.includes(role))
+}))
 
 const roleLabel = computed(() => {
   const map = { SYS_ADMIN: '系统管理员', MANAGER: '管理者', OWNER: '负责人', EXECUTOR: '执行者' }

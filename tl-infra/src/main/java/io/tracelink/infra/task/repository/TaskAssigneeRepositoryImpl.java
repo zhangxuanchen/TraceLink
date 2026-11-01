@@ -72,4 +72,10 @@ public class TaskAssigneeRepositoryImpl implements TaskAssigneeRepository {
                 .eq("task_id", taskId)
                 .eq("employee_id", employeeId)) > 0;
     }
+
+    @Override
+    public int countByEmployee(Long employeeId) {
+        return Math.toIntExact(assigneeMapper.selectCount(new QueryWrapper<TaskAssigneeEntity>()
+                .eq("employee_id", employeeId)));
+    }
 }

@@ -70,7 +70,7 @@ try {
   const navTitles = await page.locator('.nav-text').allInnerTexts()
   check('侧栏出现完成地图入口', navTitles.includes('完成地图'), navTitles.join('/'))
   const phaseCount = await page.locator('.nav-phase').count()
-  check('侧栏只剩 M5 一个占位', phaseCount === 1, `${phaseCount} 个占位`)
+  check('侧栏没有阶段占位', phaseCount === 0, `${phaseCount} 个占位`)
 
   // ---------------------------------------------------------------- 部门矩阵
   await goMap()

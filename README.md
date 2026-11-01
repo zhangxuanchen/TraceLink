@@ -13,11 +13,13 @@
 | 文档 | 内容 |
 |---|---|
 | [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v1.1：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、35 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口；M1–M4 的验收记录在 11 章 |
-| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 验收用例 M0–M5：每条验收条件对应到可执行的 `TC-Mx-nn`，含前置、步骤、断言口径与执行记录；M0–M4 已跑通（M4-03 待模型密钥复跑），M5 先作实现契约 |
+| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 验收用例 M0–M5：每条验收条件对应到可执行的 `TC-Mx-nn`，含前置、步骤、断言口径与执行记录；M0–M5 已跑通（M4-03/M5-09 的模型路径待 `ARK_API_KEY` 复跑） |
 | [scripts/acceptance-m0-m2.sh](scripts/acceptance-m0-m2.sh) | M0–M2 一键验收：76 项断言，含建单到验收一次退回、错误码、导入导出回导零重复 |
 | [scripts/acceptance-m3.sh](scripts/acceptance-m3.sh) | M3 一键验收：108 项断言，含九条条件逐条、权重即时生效、矩阵与聚合一致、快照陈旧、两级提醒幂等、保留裁剪与千单压测 |
 | [scripts/acceptance-m4.sh](scripts/acceptance-m4.sh) | M4 一键验收：77 项断言，含上传与解析状态、哈希复用、历史措施沉淀、检索与原文回溯、SSE 事件与 `TL-5031` 降级、私有文档零命中、重解析快照；未配 `ARK_API_KEY` 时 M4-03 自动跳过 |
 | [scripts/e2e-browser.mjs](scripts/e2e-browser.mjs) | 浏览器端到端验收：55 项断言，跑完成地图四视图、详情九条件与「去处理」跳转、知识库上传检索问答与沉淀、执行者视角；需前后端已启动与 playwright-core |
+| [scripts/acceptance-m5.sh](scripts/acceptance-m5.sh) | M5 一键验收：TC-M5-01~09，66 项断言，含会话归属/归档、四类工具与数据范围裁剪、引用回溯、评价证据与周期唯一、评价与统计同源、五类建议与采纳建单/改期、采纳审计与降级标记；未配 `ARK_API_KEY` 时模型可用路径自动跳过 |
+| [scripts/e2e-m5.mjs](scripts/e2e-m5.mjs) | M5 浏览器端到端：31 项断言，走会话建/问/归档、工具 chips 与入参、引用回溯、评价证据与申诉必填、建议详情、三种角色的导航与越权裁剪 |
 | [deploy/ragflow/README.md](deploy/ragflow/README.md) | RAGFlow 一体化部署：官方 v0.17.0 编排、端口与数据卷、建密钥与建知识库步骤、排障 |
 | [scripts/ragflow-up.sh](scripts/ragflow-up.sh) | 一条命令起 RAGFlow 全套（含 ES/MySQL/MinIO/Redis），等 API 就绪、建知识库并写好 tl-api 的启动环境 |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
@@ -117,7 +119,7 @@ bash scripts/ragflow-up.sh stop     # 停容器，数据卷保留
 
 ## 里程碑进度
 
-M0 骨架、M1 工单与追踪、M2 导入导出与统计、M3 完成地图、M4 知识库与带引用问答均已可运行。
+M0 骨架、M1 工单与追踪、M2 导入导出与统计、M3 完成地图、M4 知识库与带引用问答、M5 会话与评价建议均已可运行。
 
 **M0** 有登录、部门、职位、人员四个模块的增删改查。
 
@@ -160,5 +162,15 @@ M1 的本机自检走法：用 `admin` 建一张生产部工单（负责人张�
 
 本机未装 RAGFlow 时按降级口径运行：解析走本地解析器（Markdown/TXT 按标题与空行分节，500 字上下、15% 重叠），检索走 MySQL `ft_chunk` ngram 全文并 LIKE 兜底，切片快照、权限复核与引用回溯都在本地成立。`scripts/acceptance-m4.sh` 77 项断言 0 失败，`M4-03` 真实模型生成答案与引用因缺 `ARK_API_KEY` 自动跳过，配好密钥后同一脚本会自动走 `delta`、`citations` 与 `done` 分支。
 
-接下来 M5 会话与评价建议。
+**M5** 页面为「会话助手」与「复盘与建议」，迁移脚本 `V10__chat_eval_suggestion.sql`、`V11__ai_suggestion_accept_result_width.sql`。
+
+| 能力 | 接口 | 说明 |
+|---|---|---|
+| 会话 | `POST /api/v1/chat/sessions`、`GET /sessions`、`POST /sessions/{id}/archive`、`GET /sessions/{id}/messages` | 会话归属人唯一，跨用户读取 `TL-4032`；归档后提问 `TL-4091`；列表只回本人会话 |
+| 流式问答 | `POST /api/v1/chat/sessions/{id}/messages`（SSE） | 事件顺序 `retrieval → tool_call… → delta… → citations → hint → done`；工具入参带结果条数与耗时；模型不可用或失败时降级规则回答并 `done.degraded=true, model=RULE`；`Idempotency-Key` 防重复提交 |
+| 四类只读工具 | `task_query`、`stats_query`、`employee_query`、`knowledge_search` | 全部按调用人 `TaskScope` 取数；执行者越权部门被裁剪并在入参标 `clamped=true`，统计只回本人聚合 |
+| 评价 | `POST /api/v1/evaluations/run`、`GET /evaluations`、`GET /evaluations/{id}`、`POST /evaluations/{id}/appeal` | 人员六维（交付/留痕/响应/解决/协办/规范）、任务四维（重要/复杂/健康/质量），权重读 `sys_config`；周期唯一，重复触发只返回首次结果；人员口径直接复用 `stats/person`；申诉理由写入 `evidence.appealReason` 并留 `EVAL_APPEAL` 审计 |
+| 建议 | `POST /api/v1/ai/suggestions/run`、`GET /ai/suggestions`、`GET /ai/suggestions/{id}`、`POST /ai/suggestions/{id}/accept` | 五类 DISPATCH/ACTION/DUE_DATE/ESCALATE/POLICY_GAP；采纳由应用服务执行确定性动作（建单走 `TSK-1`、改期走改期接口、升级走催办），结果写 `accept_result` 与 `SUGGESTION_ACCEPT` 审计；ACTION 草稿在来源单负责人与执行人相同时改选部门内负载最低的人，避免生成不可执行的建议 |
+
+`scripts/acceptance-m5.sh` 连续两轮 66 通过 / 0 失败 / 1 跳过（模型可用路径待密钥），`node scripts/e2e-m5.mjs` 31/31 通过。会话侧默认走规则降级：未配置 `ARK_API_KEY` 时以工具结果拼装回答并在页面标注「规则回答（降级）」，配置后自动切到模型流式回答；引用与工具调用在两种模式下都成立。
 
