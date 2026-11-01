@@ -1,6 +1,6 @@
 # TraceLink 工单系统设计文档
 
-版本 v1.0　编写日期 2026-11-01　状态 设计基线（Q1–Q15 全部确认；第 11 章已收口；M1 工单与追踪、M2 导入导出与统计、M3 完成地图已实现并通过验收）
+版本 v1.1　编写日期 2026-11-01　状态 设计基线（Q1–Q15 全部确认；第 11 章已收口；M1 工单与追踪、M2 导入导出与统计、M3 完成地图、M4 知识库与带引用问答已实现并通过验收，M4-03 待模型密钥环境复跑）
 
 ## 1 文档定位与需求来源
 
@@ -662,6 +662,10 @@ RAGFlow 不可用时按三种情况降级。服务不可达时检索直接失败
 
 检索实现挂在 `io.agentscope.core.rag.Knowledge` 接口后面，本系统只依赖这个接口，不直接写检索的 HTTP 逻辑。接口的边界要说准确：`RetrieveConfig` 只有条数与阈值四项，没有数据集、文档与标签的表达能力，因此"换实现只换一个 Bean"只对不带范围条件的检索成立；带范围条件的检索要经过范围层，由它调 `RAGFlowClient` 的 `retrieve` 并传入 `metadata_condition`。文档上传与解析状态不在这个接口内，官方适配器的 `addDocuments` 直接抛不支持异常，这两件事由自研 REST 客户端承担。Dify 的适配类 `DifyKnowledge` 签名相同但只传条数，本轮不启用，留着这个可能性不影响代码结构。
 
+实现口径（M4）补六条，都是落地时才看清的取舍。第一，解析状态收敛为 `PENDING`、`PARSING`、`READY`、`FAILED` 四态，上传先落 `PENDING` 再异步解析，页面用 `GET /kb/documents/{id}/sync` 轮询推进；失败原因写进 `sync_msg`，同一篇可反复重试，空文档固定报「未提取到文本」。第二，同一文件按 `file_hash` 复用原文档并原样返回，不重建切片，重传不改 `chunk_cnt`。第三，未接 RAGFlow 时由本地解析器（Markdown 与 TXT 按标题、空行分节，500 字上下、15% 重叠）与本地检索器（MySQL ngram 全文，零命中再 LIKE 兜底，相似度统一标 0.35）顶住，结果一律标 `LOCAL`，页面顶部提示降级；解析器与远端客户端都是领域端口加基础设施适配器，接上 RAGFlow 只换实现，应用层不改。第四，重解析不清旧切片，旧片置 `superseded=1`，检索只取 `superseded=0`，引用按切片 ID 仍能打开原文，这样"文档整体替换"与"历史引用不许变死链"才不冲突。第五，历史沉淀取最近一年 `DONE` 工单（可按部门限定），把工单号、部门、类型、完成时间、验收结果、问题与措施、验收标准拼成一篇 Markdown，知识域固定 `HISTORY`、来源 `TASK_PAIR`、`source_ref` 记工单号，按内容哈希去重并统计 `scanned`、`created`、`skipped`。第六，问答事件流顺序是 `retrieved`、`delta`…、`citations`、`done`；模型密钥缺失时在 `retrieved` 之后发 `error TL-5031` 再关闭，让页面仍能展示召回切片；问题长度 3–500 字在开流前校验，否则 `TL-4228`，避免流已建立才报参数错。
+
+降级检索的召回边界要写清楚，否则验收会误判：MySQL ngram 是 OR 语义，短词与纯数字会把日期串、编号串一起召回，所以范围隔离的用例用纯字母唯一标识判定零命中，不用工单号或日期；本地相似度只做排序参考，不当作语义相关度阈值。
+
 ### 4.8 会话平台模块
 
 职责：提供一个可以提问的地方，把问题、工单、统计与知识连起来回答。
@@ -863,6 +867,9 @@ sequenceDiagram
 | KB-3 | `POST /kb/ask` | 带引用问答 | 任意登录用户 | — |
 | KB-4 | `GET /kb/documents/{id}/sync` | 解析与切片同步状态 | 知识库管理员 | — |
 | KB-5 | `POST /kb/documents/{id}/sync` | 重新解析并回写切片 | 知识库管理员 | 文档状态 |
+| KB-6 | `POST /kb/documents/history` | 从已完成工单沉淀历史问题与措施文档 | 知识库管理员 | 内容哈希去重 |
+| KB-7 | `GET /kb/chunks/{id}` | 切片原文回溯，含旧快照 | 按数据范围 | — |
+| KB-8 | `GET /kb/documents` | 可见文档列表，按域、部门、状态与标题关键字过滤 | 按数据范围 | — |
 | CHT-1 | `POST /chat/sessions` | 新建会话 | 任意登录用户 | — |
 | CHT-2 | `GET /chat/sessions` | 我的会话列表 | 本人 | — |
 | CHT-3 | `POST /chat/sessions/{id}/messages` | 提问并以事件流接收回答 | 会话归属人 | 支持幂等键 |
@@ -1020,6 +1027,7 @@ sequenceDiagram
 | TL-4223 | 422 | 结果类记录缺少证据 | 提示写清做什么与结果（M2 起可附附件），不少于 20 字 |
 | TL-4224 | 422 | 退回未填理由 | 定位到退回理由输入框，提示不少于 10 字 |
 | TL-4225 | 422 | 验收条件存在未判定项 | 提示还有几项未勾选，逐条判定后再提交 |
+| TL-4228 | 422 | 问题为空、过短或超出长度 | 问答要求 3–500 字，检索放宽到 2 字；提示改完再提交 |
 | TL-4291 | 429 | 触发限流 | 带 `Retry-After` |
 | TL-5001 | 500 | 内部错误 | 返回 traceId，不返回堆栈 |
 | TL-5031 | 503 | 外部依赖不可用 | 前端提示稍后重试或走规则结果 |
@@ -1251,13 +1259,14 @@ CREATE TABLE kb_document (
   visibility      VARCHAR(16)  NOT NULL DEFAULT 'ALL' COMMENT 'ALL DEPT DEPT_TREE 同步到 RAGFlow 的可见范围标签',
   file_key        VARCHAR(255) NOT NULL COMMENT '原件在文件卷的相对路径',
   file_hash       CHAR(64)     NOT NULL,
-  source_type     VARCHAR(16)  NOT NULL COMMENT 'UPLOAD TASK_PAIR',
-  dataset_id      VARCHAR(64)  NOT NULL COMMENT 'RAGFlow 知识库标识',
+  source_type     VARCHAR(16)  NOT NULL DEFAULT 'UPLOAD' COMMENT 'UPLOAD TASK_PAIR',
+  source_ref      VARCHAR(128) NULL COMMENT '沉淀来源 工单号或批次号',
+  dataset_id      VARCHAR(64)  NOT NULL DEFAULT 'default' COMMENT 'RAGFlow 知识库标识',
   external_doc_id VARCHAR(64)  NULL COMMENT 'RAGFlow 文档标识',
   parser_id       VARCHAR(64)  NULL COMMENT 'RAGFlow 切片模板标识',
   embedding_model VARCHAR(64)  NULL COMMENT '解析时使用的向量模型 换代对照用',
   chunk_cnt       INT          NOT NULL DEFAULT 0,
-  sync_status     VARCHAR(16)  NOT NULL DEFAULT 'UPLOADED' COMMENT 'UPLOADED PARSING PARSED FAILED',
+  sync_status     VARCHAR(16)  NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING PARSING READY FAILED',
   sync_msg        VARCHAR(500) NULL,
   synced_at       DATETIME     NULL,
   created_by      BIGINT       NOT NULL,
@@ -1278,10 +1287,12 @@ CREATE TABLE kb_chunk (
   page_no           INT         NULL,
   token_cnt         INT         NULL,
   meta              JSON        NULL COMMENT '知识域 部门 来源工单',
+  superseded        TINYINT     NOT NULL DEFAULT 0 COMMENT '1 表示被重新解析替换 仍可按 ID 回溯原文',
+  created_at        DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FULLTEXT KEY ft_chunk (content) WITH PARSER ngram,
   UNIQUE KEY uk_chunk_ext (doc_id, external_chunk_id),
-  KEY idx_chunk_doc (doc_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识切片快照';
+  KEY idx_chunk_doc (doc_id, superseded)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识切片快照 检索只取 superseded=0';
 
 CREATE TABLE gate_rule (
   id         BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -1983,12 +1994,13 @@ CREATE TABLE job_task (
 | `visibility` | 可见范围标签：全员、本部门、本部门及下级 | 拼检索条件；召回池收窄到「本部门加全员可见」 |
 | `file_key` 与 `file_hash` | 原件位置与内容哈希 | 下载原件；同一文件重复上传被唯一键挡住 |
 | `source_type` | 上传，或从历史问题与措施成对生成 | 回答「这类问题以前怎么处理」时优先取成对生成的切片 |
+| `source_ref` | 沉淀来源的工单号或批次号 | 引用面板显示「出自哪张单」；重复沉淀定位原单 |
 | `dataset_id` | RAGFlow 知识库标识 | 检索时定位；回退为两类知识库时本列存主库，备用库由配置指定 |
 | `external_doc_id` | RAGFlow 侧文档标识 | 触发解析、轮询状态、删除同步 |
 | `parser_id` | 切片模板标识 | 制度按章节切、问题按整对切；换模板重解析 |
 | `embedding_model` | 解析时使用的向量模型 | 模型换代后找出需要重解析的文档 |
 | `chunk_cnt` | 切片数 | 页面显示；为 0 时判为解析失败 |
-| `sync_status` `sync_msg` `synced_at` | 解析三件套 | 列表显示卡在哪一步；失败原因可读；重试按状态筛选 |
+| `sync_status` `sync_msg` `synced_at` | 解析三件套，状态取 `PENDING`、`PARSING`、`READY`、`FAILED` | 列表显示卡在哪一步；失败原因可读；重试按状态筛选 |
 | `created_by` 与 `deleted` | 上传人与逻辑删除 | 删除时同步到 RAGFlow；已固化的引用正文不受影响 |
 | 索引 `idx_doc_domain_dept` `idx_doc_sync` `idx_doc_ext` | 按域与部门取、扫待解析、按外部标识回查 | 知识库列表；解析队列；状态回调 |
 
@@ -2003,8 +2015,10 @@ CREATE TABLE job_task (
 | `page_no` | 原文档页码 | 点开引用跳到原页，减少人工找 |
 | `token_cnt` | 长度 | 估算提示词预算；判断切片是否被切碎 |
 | `meta` | 知识域、部门、来源工单等 | 降级检索结果的归属复核 |
+| `superseded` | 1 表示被重新解析替换的旧片 | 检索只取 `superseded=0`；引用按 ID 仍能打开旧片原文，不让历史引用变死链 |
+| `created_at` | 快照写入时间 | 引用面板显示「依据是哪一版」；重解析后新旧片可按时间区分 |
 | 全文索引 `ft_chunk` | 中文关键词检索 | RAGFlow 不可用或超时时的降级路径 |
-| 唯一键 `uk_chunk_ext` 与 `idx_chunk_doc` | 回写去重、按文档取片 | 整篇重解析；引用面板取同文档上下文 |
+| 唯一键 `uk_chunk_ext` 与 `idx_chunk_doc` | 回写去重、按文档取有效片 | 整篇重解析；引用面板取同文档上下文 |
 
 #### 6.3.7 会话与智能
 
@@ -2566,6 +2580,8 @@ M1 的验收已按第 10 章走通：生产部一条整改事项从建单、写�
 M2 的验收同样走通，用的是 83 MB 的真实样本（10 个工作表）。首次导入：明细行 61 行、完整识别 58 行（行识别率 95.1%）、其中 57 行认到主责，人名提及 131 次全部命中（100%），两项门槛分别 95% 与 92%，确认后建单 57 张、跳过 4 行、失败 0 行。同一文件重复上传直接返回原批次（`duplicate=true`），工单数量不变。五种模板各生成一份：日报回填按七天出七页、周报 21 行、台账 39 行、绩效 20 行、图表 86 行。把导出的日报原样导回，识别率两项都是 100%，预览动作 `CREATE 0 / MERGE 0 / SKIP 57`，确认后新增 0 张、失败 0 行，工单总数保持 62 不变，且 `daily_report` 与 `task_metric` 按日期覆盖而非叠加。这一轮同时修掉四处会让验收数字失真的问题：`task.source_ref` 未序列化导致整批入库失败、行指纹带页名导致回导重复建单、日报「负责人」列写成汇报人导致认错责任人、台账只按创建时间取数导致空表与完成率超过 100%。
 
 M3 的验收也已走通，口径与实现一致：九条条件与权重落在 `gate_rule`（4 种类型共 15 行，每类型权重合计一百），单工单完成地图是实时算式，部门矩阵、缺口排行与事项地图读 `task_gate_snapshot` 日快照。权重改库即时生效（巡查类 G6 由 10 改 20 后同一张单完成率 4%→7%，无需重启）；`PENDING` 单不写追踪记录时 G1 未达成，首条 `PROGRESS` 落库后 G1 立刻达成（派工只改主责与期限，不改状态）；退回后 G9 回到未达成且 `hint` 带退回理由。快照任务造 1050 张在办单实测约 1 秒（976 ms–1.2 s），`cellCount` 恒等于 `taskCount × 9`，超过 180 天的明细被裁剪、`gate_gap_daily` 保留聚合计数。两级提醒按昨日快照滞留天数去重：C 单满三日只发承担者、B 单满七日发承担者与负责人，共 3 条；同日重跑 0 条。浏览器端到端（`scripts/e2e-browser.mjs`，32 项断言）另核过四视图、详情九条件与「去处理」跳转、执行者只读视角，接口侧另由 `scripts/acceptance-m3.sh` 的 108 项断言兜住。这一轮修掉一处会让提醒漏发的缺陷：原唯一键 `(task_id, gate_code, level, episode_start)` 在七日级同时插入承担者与负责人时撞键，V8 迁移把 `recipient_id` 加入唯一键，`exists` 判重也改为按收件人。
+
+M4 的验收在未装 RAGFlow、未配 `ARK_API_KEY` 的本机环境按降级口径走通：解析走本地解析器、检索走 ngram 全文，`retrieved` 一律标 `LOCAL`，页面顶部提示降级。上传侧验证了 `PENDING → READY` 轮询、哈希复用不重建切片、空文档置 `FAILED` 且原因可读并再次重试、PDF 抽取到切片；历史沉淀从一张走到 `DONE` 的产线整改单生成 `HISTORY` 文档（`source_ref` 记工单号），二次沉淀 `created=0`、`skipped` 与 `scanned` 相等；以「毛刺超标怎么处理」检索命中历史措施片段，点开引用能看到含「去毛刺」「毛刺」的原文。范围隔离用纯字母唯一标识验证：管理员命中生产部私有制度，质量部执行者同词零命中，显式带 `deptId=2` 仍零命中，直接取该切片返回 `TL-4032`，文档列表也不泄露标题。重解析后旧片 `superseded=1`、新片有效，旧切片 ID 仍可取原文并标「旧快照」；文档处于 `PARSING` 时再次触发同步返回 `TL-4091`。问答侧核了事件顺序 `retrieved`、`delta`、`citations`、`done` 的契约与 `TL-4228`（2 字、501 字、空白），无密钥时在 `retrieved` 之后发 `error TL-5031` 再关闭，页面仍展示召回切片。`scripts/acceptance-m4.sh` 77 项断言 0 失败，`M4-03` 真实模型生成答案与引用因缺密钥标记为待复跑；浏览器端到端扩到 55 项断言，把上传、检索取原文、问答降级提示、历史沉淀与执行者零命中一并走了一遍。这一轮修掉两处会让用例误判的问题：MySQL ngram 是 OR 语义，纯数字标识会命中文档里的日期串，范围用例改用纯字母唯一标识；历史样本工单的主责须属于承办部门（否则 `TL-4221`），且提交验收前必须有结果类追踪记录。
 
 后续要观察的三件事不是待确认项，而是试点期的校准依据：逾期池里的单是否真的变少、缺口提醒是否有人响应、会话里的提问是否被带引用的回答接住（第 10 章的试点判据）。
 

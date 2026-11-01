@@ -12,11 +12,12 @@
 
 | 文档 | 内容 |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v1.0：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、35 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口；M1、M2、M3 的验收记录在 11 章 |
-| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 验收用例 M0–M5：每条验收条件对应到可执行的 `TC-Mx-nn`，含前置、步骤、断言口径与执行记录；M0–M3 已跑通，M4–M5 先作实现契约 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v1.1：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、35 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口；M1–M4 的验收记录在 11 章 |
+| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 验收用例 M0–M5：每条验收条件对应到可执行的 `TC-Mx-nn`，含前置、步骤、断言口径与执行记录；M0–M4 已跑通（M4-03 待模型密钥复跑），M5 先作实现契约 |
 | [scripts/acceptance-m0-m2.sh](scripts/acceptance-m0-m2.sh) | M0–M2 一键验收：76 项断言，含建单到验收一次退回、错误码、导入导出回导零重复 |
 | [scripts/acceptance-m3.sh](scripts/acceptance-m3.sh) | M3 一键验收：108 项断言，含九条条件逐条、权重即时生效、矩阵与聚合一致、快照陈旧、两级提醒幂等、保留裁剪与千单压测 |
-| [scripts/e2e-browser.mjs](scripts/e2e-browser.mjs) | 浏览器端到端验收：32 项断言，跑完成地图四视图、详情九条件与「去处理」跳转、执行者视角；需前后端已启动与 playwright-core |
+| [scripts/acceptance-m4.sh](scripts/acceptance-m4.sh) | M4 一键验收：77 项断言，含上传与解析状态、哈希复用、历史措施沉淀、检索与原文回溯、SSE 事件与 `TL-5031` 降级、私有文档零命中、重解析快照；未配 `ARK_API_KEY` 时 M4-03 自动跳过 |
+| [scripts/e2e-browser.mjs](scripts/e2e-browser.mjs) | 浏览器端到端验收：55 项断言，跑完成地图四视图、详情九条件与「去处理」跳转、知识库上传检索问答与沉淀、执行者视角；需前后端已启动与 playwright-core |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
 | [config/application-ai.yml](config/application-ai.yml) | 模型与 RAGFlow 配置示例，密钥从环境变量注入 |
 | [config/.env.example](config/.env.example) | 环境变量键名，真实值写 `config/.env`，不进版本库 |
@@ -68,7 +69,7 @@
 docker compose up -d
 docker compose ps            # 等 STATUS 显示 healthy，首次拉镜像约一分钟
 
-# 2 构建后端（Flyway 在应用启动时自动跑 V1–V8 迁移）
+# 2 构建后端（Flyway 在应用启动时自动跑 V1–V9 迁移）
 export JAVA_HOME=/Users/zxc/Library/Java/JavaVirtualMachines/jdk-21.0.13+9/Contents/Home
 mvn -DskipTests package
 java -jar tl-api/target/tracelink.jar
@@ -102,7 +103,7 @@ mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'tracelink'; \
 
 ## 里程碑进度
 
-M0 骨架、M1 工单与追踪、M2 导入导出与统计、M3 完成地图均已可运行。
+M0 骨架、M1 工单与追踪、M2 导入导出与统计、M3 完成地图、M4 知识库与带引用问答均已可运行。
 
 **M0** 有登录、部门、职位、人员四个模块的增删改查。
 
@@ -130,7 +131,20 @@ M1 的本机自检走法：用 `admin` 建一张生产部工单（负责人张�
 | 事项完成地图 | `GET /api/v1/completion-map/matter/{taskId}` | 沿父子与复发链按时间轴排同一事项的工单，反复停下的条件高亮 |
 | 快照与提醒 | `POST /api/v1/completion-map/snapshot`、`GET /api/v1/notifications`、`POST /notifications/{id}/read` | 当日快照可手动重算；三日提醒承担者、七日提醒负责人，只发新增与跨阈值，按收件人幂等 |
 
-九条条件与权重在 `gate_rule`（4 种类型 15 行，每类型合计一百），改库即时生效；矩阵、排行与事项视图读 `task_gate_snapshot` 日快照，快照失败时矩阵返回上一日并置 `stale`，页面给出数据截止时间与「立即重算」。`scripts/acceptance-m3.sh` 108 项断言覆盖九条逐条、权重即时生效、退回后 G9、矩阵与聚合一致、快照陈旧、两级提醒幂等、180 天保留裁剪与千单压测（1050 张约 1.0–1.2 秒）。浏览器侧另有 `node scripts/e2e-browser.mjs`，32 项断言把四视图、详情九条件与「去处理」跳转、执行者只读视角走一遍，截图落在 `/tmp/tracelink-e2e`。
+九条条件与权重在 `gate_rule`（4 种类型 15 行，每类型合计一百），改库即时生效；矩阵、排行与事项视图读 `task_gate_snapshot` 日快照，快照失败时矩阵返回上一日并置 `stale`，页面给出数据截止时间与「立即重算」。`scripts/acceptance-m3.sh` 108 项断言覆盖九条逐条、权重即时生效、退回后 G9、矩阵与聚合一致、快照陈旧、两级提醒幂等、180 天保留裁剪与千单压测（1050 张约 1.0–1.2 秒）。浏览器侧另有 `node scripts/e2e-browser.mjs`，55 项断言把四视图、详情九条件与「去处理」跳转、知识库与执行者只读视角走一遍，截图落在 `/tmp/tracelink-e2e`。
 
-接下来 M4 接 RAGFlow 与火山引擎 Ark（按 `docs/LLM-CONFIG.md` 第 7 节跑通两段 curl），M5 会话与评价建议。
+**M4** 页面为「知识库」，接口前缀 `/api/v1/kb`，迁移脚本 `V9__knowledge_base.sql`。
+
+| 能力 | 接口 | 说明 |
+|---|---|---|
+| 文档入库 | `POST /api/v1/kb/documents`、`GET /{id}/sync`、`POST /{id}/sync` | multipart 上传（PDF/DOCX/MD/TXT），按 `file_hash` 复用原文档；`PENDING → PARSING → READY/FAILED` 轮询，失败可单篇重试；空文档固定报「未提取到文本」 |
+| 文档列表 | `GET /api/v1/kb/documents` | 只列可见文档，按知识域、部门、状态与标题关键字过滤 |
+| 检索 | `POST /api/v1/kb/search` | 先按数据范围算出可见文档，再召回切片；未接 RAGFlow 时 `retriever=LOCAL`、`degraded=true`，页面提示降级 |
+| 带引用问答 | `POST /api/v1/kb/ask` | SSE 顺序 `retrieved → delta… → citations → done`；无 `ARK_API_KEY` 时在 `retrieved` 后发 `error TL-5031`，页面仍列召回切片 |
+| 历史沉淀 | `POST /api/v1/kb/documents/history` | 取最近一年 `DONE` 工单，把问题、措施、验收结果拼成 `HISTORY` 文档，`source_ref` 记工单号，按内容哈希去重 |
+| 切片原文 | `GET /api/v1/kb/chunks/{id}` | 引用与检索命中点击回溯源文；重解析后的旧片标「旧快照」，历史引用不变死链 |
+
+本机未装 RAGFlow 时按降级口径运行：解析走本地解析器（Markdown/TXT 按标题与空行分节，500 字上下、15% 重叠），检索走 MySQL `ft_chunk` ngram 全文并 LIKE 兜底，切片快照、权限复核与引用回溯都在本地成立。`scripts/acceptance-m4.sh` 77 项断言 0 失败，`M4-03` 真实模型生成答案与引用因缺 `ARK_API_KEY` 自动跳过，配好密钥后同一脚本会自动走 `delta`、`citations` 与 `done` 分支。
+
+接下来 M5 会话与评价建议。
 
