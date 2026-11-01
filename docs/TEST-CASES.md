@@ -1,6 +1,6 @@
 # TraceLink 测试用例（M0–M5）
 
-按 `docs/DESIGN.md` 第 10 章的验收条件逐条落成用例，供每个里程碑「先写用例、再写实现、跑完用例再宣布完成」。M0–M5 的用例已在 2026-11-01 实际跑通（M4-03 与 TC-M5-09 的模型可用路径需 `ARK_API_KEY`，本机按降级口径记为待复跑）。M5 的接口层用例由 `scripts/acceptance-m5.sh` 跑两轮（66 通过 / 0 失败 / 1 跳过），浏览器层由 `scripts/e2e-m5.mjs` 跑 31 项。
+按 `docs/DESIGN.md` 第 10 章的验收条件逐条落成用例，供每个里程碑「先写用例、再写实现、跑完用例再宣布完成」。M0–M5 的用例已在 2026-11-01 实际跑通，含模型可用路径（`ARK_API_KEY` + `ARK_CHAT_MODEL=doubao-seed-2-0-mini-260428`）。M5 的接口层用例由 `scripts/acceptance-m5.sh` 跑（配密钥后 66 通过 / 0 失败 / 0 跳过），浏览器层由 `scripts/e2e-m5.mjs` 跑 31 项。
 
 ## 1 使用说明
 
@@ -377,7 +377,7 @@ delete from daily_report; delete from task_metric; delete from export_task;
 
 ---
 
-## 9 M4：知识库与带引用问答（✅ 已通过，M4-03 待密钥复跑）
+## 9 M4：知识库与带引用问答（✅ 已通过）
 
 **TC-M4-01 文档入库与解析状态**
 - 来源：KB-1、KB-4；4.7
@@ -395,7 +395,7 @@ delete from daily_report; delete from task_metric; delete from export_task;
 - 来源：KB-3；5.2 事件流契约
 - 步骤：`POST $B/kb/ask` 观察事件序列
 - 预期：`retrieved` → `delta`… → `citations` → `done`；`citations` 含文档 ID、切片序号、原文摘要；点开引用能看到原文
-- 状态：⏳ 待复跑（2026-11-01 未配 `ARK_API_KEY`）——本轮事件流在 `retrieved` 后发 `error TL-5031` 并关闭，`scripts/acceptance-m4.sh` 自动跳过本项；配好密钥后同一脚本会自动断言 `delta`、`citations` 与 `done`
+- 状态：✅ 通过（2026-11-01，配密钥复跑）——`ARK_CHAT_MODEL=doubao-seed-2-0-mini-260428` 下事件流走 `retrieved` → `delta…` → `citations` → `done`，`citations` 含文档 ID 与切片序号并可点开回溯原文；`scripts/acceptance-m4.sh` 79 项 0 失败 0 跳过（降级路径另由 TC-M4-04 覆盖）
 
 **TC-M4-04 模型不可用降级**
 - 来源：TL-5031；4.8
@@ -423,9 +423,9 @@ delete from daily_report; delete from task_metric; delete from export_task;
 
 ---
 
-## 10 M5：会话、评价与建议（✅ 已跑通；模型可用路径待密钥复跑）
+## 10 M5：会话、评价与建议（✅ 已通过，含模型可用路径）
 
-可复跑入口：`bash scripts/acceptance-m5.sh`（TC-M5-01~09 接口层，连续两轮 66 通过 / 0 失败 / 1 跳过）；
+可复跑入口：`bash scripts/acceptance-m5.sh`（TC-M5-01~09 接口层：配密钥 66 通过 / 0 失败 / 0 跳过；未配密钥 66 通过 / 0 失败 / 1 跳过）；
 `node scripts/e2e-m5.mjs`（浏览器层 31 项，需前端 dev server）。
 
 **TC-M5-01 会话归属与归档**
@@ -480,7 +480,7 @@ delete from daily_report; delete from task_metric; delete from export_task;
 - 来源：4.9「失败两次降级为规则结果并标记 degraded」
 - 步骤：让模型返回非法 JSON 两次
 - 预期：返回规则结果并 `degraded=true`，页面标明来源；不重试第三次，不影响其他请求
-- 状态：✅ 降级路径通过（2026-11-01）：未配置 `ARK_API_KEY` 时 `done.degraded=true`、`model=RULE`，浏览器标注「规则回答（降级）」；降级后同会话再问事件顺序完整。⏳ 模型可用路径：配置 `ARK_API_KEY` 后复跑本项，断言 `degraded=false` 且 `model!=RULE`
+- 状态：✅ 两条路径均通过（2026-11-01）。降级路径：未配置 `ARK_API_KEY` 时 `done.degraded=true`、`model=RULE`，浏览器标注「规则回答（降级）」。模型可用路径：配 `ARK_API_KEY` 与 `ARK_CHAT_MODEL=doubao-seed-2-0-mini-260428` 后复跑，`done.degraded=false` 且 `model=doubao-seed-2-0-mini-260428`，`chat_message` 记 `token_in/token_out`（7/44）与 `latency_ms≈4.1s`；降级后同会话再问事件顺序仍完整
 
 ---
 

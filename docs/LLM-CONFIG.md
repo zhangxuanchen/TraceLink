@@ -20,7 +20,9 @@
 
 在火山引擎方舟控制台开通模型服务，创建推理接入点，得到三类信息：接入点 ID（形如 `ep-...`）、可用的模型标识、调用域名。对话与向量各建一个接入点，分开计费也分开限流。
 
-`model-name` 这一项填接入点 ID 还是模型标识，取决于控制台给出的形态，两种在 Ark 上都出现过，以控制台为准 `[To be confirmed]`。配置里留成了一个环境变量，换形态只改环境变量不改代码。
+`model-name` 这一项填接入点 ID 还是模型标识，取决于控制台给出的形态，两种在 Ark 上都出现过，以控制台为准。配置里留成了一个环境变量，换形态只改环境变量不改代码。
+
+2026-11-01 在本机实测：只带 `Authorization: Bearer` 的推理密钥、把 `model` 直接写成模型标识也能通（本机验证可用的对话模型是 `doubao-seed-2-0-mini-260428`），不需要接入点 ID。`GET $ARK_BASE_URL/models` 能列出该账号可见的 138 个模型，其中 55 个未下线；未开通的模型会返回 `404 ModelNotOpen`（提示到控制台开通），所以选型时先用第 7 节的 curl 探一次，再把可用模型写进 `ARK_CHAT_MODEL`。
 
 ## 3 配置项
 
@@ -165,9 +167,13 @@ source deploy/ragflow/.env.tracelink
 
 ## 7 连通性自检
 
-两段 `curl` 足够判断是密钥错、模型名错还是网络不通。第一段验对话：
+两段 `curl` 足够判断是密钥错、模型名错还是网络不通；本机也可以直接跑 `bash scripts/ai-restart.sh --check-only`，它读 `config/.env` 后做第一段自检并打印 HTTP 码、返回片段与 tokens。第一段验对话：
 
 ```bash
+# 密钥与模型写在 config/.env（已 gitignore），填好后可直接用脚本自检
+bash scripts/ai-restart.sh --check-only
+
+# 或手工调用
 curl -sS "$ARK_BASE_URL/chat/completions" \
   -H "Authorization: Bearer $ARK_API_KEY" \
   -H "Content-Type: application/json" \
@@ -190,7 +196,9 @@ curl -sS "$ARK_BASE_URL/embeddings" \
 
 三类失败分开处理，与第 7 章一致。超时按可重试处理，退避一次；限流返回 `TL-4291` 并带 `Retry-After`；返回结构不合法重试一次，仍不合法降级为规则结果并标 `degraded`，页面要标明这一轮不是模型判断。
 
-会话链路的降级不一样，因为用户正在等。模型不可用时先发 `error` 事件再关闭流；检索可用而模型不可用时只返回切片与引用，不生成没有依据的结论。这一条写在 4.8 与第 7 章。
+会话链路的降级不一样，因为用户正在等。模型不可用或失败时不出错中断，而是用工具与检索结果拼一条规则回答，在 `done` 事件里标 `degraded=true`、`model=RULE`，页面据此标注「规则回答（降级）」，本轮不算模型判断。这一条写在 4.8 与第 7 章。
+
+本机填写与生效只有两步：把 `ARK_API_KEY`、`ARK_CHAT_MODEL`（可选 `ARK_EMBEDDING_MODEL`、`RAGFLOW_*`）写进 `config/.env`，然后跑 `bash scripts/ai-restart.sh`——先做一次对话自检，通过后带这套环境变量重启 tl-api 并等健康检查。`--check-only` 只自检不重启。注意 Agent 型 Shell 会在命令结束时回收子进程，那种环境要用后台执行方式启动 `java -jar tl-api/target/tracelink.jar`。
 
 ## 9 密钥管理与轮换
 
