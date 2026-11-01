@@ -410,7 +410,7 @@ graph LR
     Rf --> Ext1
 ```
 
-这个拓扑的前提是 tl-api 与 MySQL 同机或同网段低延迟内网。RAGFlow 与 tl-api 同机部署，检索是一次内网 HTTP 调用，不跨公网。RAGFlow 自身还要一套存储与检索组件，具体组件范围以官方部署文档为准 `[To be confirmed]`，备份与升级跟着它走。
+这个拓扑的前提是 tl-api 与 MySQL 同机或同网段低延迟内网。RAGFlow 与 tl-api 同机部署，检索是一次内网 HTTP 调用，不跨公网。RAGFlow 自身还要 Elasticsearch、MySQL、MinIO、Redis 与解析执行器，这些组件已按官方 v0.17.0 的编排收进 `deploy/ragflow/`，`scripts/ragflow-up.sh` 一条命令起全套、等 API 就绪并建好知识库，端口与数据卷说明见 `deploy/ragflow/README.md`。它与本系统的 MySQL 分开（RAGFlow 用 5455，本系统 3306），备份与升级跟着 RAGFlow 官方走。之所以用编排而不是把 RAGFlow 源码并进本仓库，是因为它是 Python 服务栈，只能经 HTTP 调用，代码层的"融合"已经由领域端口与适配器完成，部署层只需要把两者当成一套系统启动。
 
 模型服务按 Q7 定在火山引擎 Ark，机器在内网、模型在公网，因此 tl-api 与 RAGFlow 各需要一条出网通道。这条通道是直连还是经代理，取决于内网策略 `[To be confirmed]`，代理节点只在确有必要时加进这张图。出网方向是单向的：本系统与 RAGFlow 调 Ark，Ark 不回调本系统。
 
@@ -664,7 +664,7 @@ RAGFlow 不可用时按三种情况降级。服务不可达时检索直接失败
 
 实现口径（M4）补六条，都是落地时才看清的取舍。第一，解析状态收敛为 `PENDING`、`PARSING`、`READY`、`FAILED` 四态，上传先落 `PENDING` 再异步解析，页面用 `GET /kb/documents/{id}/sync` 轮询推进；失败原因写进 `sync_msg`，同一篇可反复重试，空文档固定报「未提取到文本」。第二，同一文件按 `file_hash` 复用原文档并原样返回，不重建切片，重传不改 `chunk_cnt`。第三，未接 RAGFlow 时由本地解析器（Markdown 与 TXT 按标题、空行分节，500 字上下、15% 重叠）与本地检索器（MySQL ngram 全文，零命中再 LIKE 兜底，相似度统一标 0.35）顶住，结果一律标 `LOCAL`，页面顶部提示降级；解析器与远端客户端都是领域端口加基础设施适配器，接上 RAGFlow 只换实现，应用层不改。第四，重解析不清旧切片，旧片置 `superseded=1`，检索只取 `superseded=0`，引用按切片 ID 仍能打开原文，这样"文档整体替换"与"历史引用不许变死链"才不冲突。第五，历史沉淀取最近一年 `DONE` 工单（可按部门限定），把工单号、部门、类型、完成时间、验收结果、问题与措施、验收标准拼成一篇 Markdown，知识域固定 `HISTORY`、来源 `TASK_PAIR`、`source_ref` 记工单号，按内容哈希去重并统计 `scanned`、`created`、`skipped`。第六，问答事件流顺序是 `retrieved`、`delta`…、`citations`、`done`；模型密钥缺失时在 `retrieved` 之后发 `error TL-5031` 再关闭，让页面仍能展示召回切片；问题长度 3–500 字在开流前校验，否则 `TL-4228`，避免流已建立才报参数错。
 
-降级检索的召回边界要写清楚，否则验收会误判：MySQL ngram 是 OR 语义，短词与纯数字会把日期串、编号串一起召回，所以范围隔离的用例用纯字母唯一标识判定零命中，不用工单号或日期；本地相似度只做排序参考，不当作语义相关度阈值。
+降级检索的召回边界要写清楚，否则验收会误判：MySQL ngram 是 OR 语义，短词与纯数字会把日期串、编号串一起召回，所以范围隔离的用例用纯字母唯一标识判定零命中，不用工单号或日期；本地相似度只做排序参考，不当作语义相关度阈值。部署侧的一体化编排（RAGFlow 加 ES、MySQL、MinIO、Redis）与建知识库脚本见 `deploy/ragflow/README.md` 与 `scripts/ragflow-up.sh`，开启只改环境变量，业务代码不动。
 
 ### 4.8 会话平台模块
 

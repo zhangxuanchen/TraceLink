@@ -18,6 +18,8 @@
 | [scripts/acceptance-m3.sh](scripts/acceptance-m3.sh) | M3 一键验收：108 项断言，含九条条件逐条、权重即时生效、矩阵与聚合一致、快照陈旧、两级提醒幂等、保留裁剪与千单压测 |
 | [scripts/acceptance-m4.sh](scripts/acceptance-m4.sh) | M4 一键验收：77 项断言，含上传与解析状态、哈希复用、历史措施沉淀、检索与原文回溯、SSE 事件与 `TL-5031` 降级、私有文档零命中、重解析快照；未配 `ARK_API_KEY` 时 M4-03 自动跳过 |
 | [scripts/e2e-browser.mjs](scripts/e2e-browser.mjs) | 浏览器端到端验收：55 项断言，跑完成地图四视图、详情九条件与「去处理」跳转、知识库上传检索问答与沉淀、执行者视角；需前后端已启动与 playwright-core |
+| [deploy/ragflow/README.md](deploy/ragflow/README.md) | RAGFlow 一体化部署：官方 v0.17.0 编排、端口与数据卷、建密钥与建知识库步骤、排障 |
+| [scripts/ragflow-up.sh](scripts/ragflow-up.sh) | 一条命令起 RAGFlow 全套（含 ES/MySQL/MinIO/Redis），等 API 就绪、建知识库并写好 tl-api 的启动环境 |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
 | [config/application-ai.yml](config/application-ai.yml) | 模型与 RAGFlow 配置示例，密钥从环境变量注入 |
 | [config/.env.example](config/.env.example) | 环境变量键名，真实值写 `config/.env`，不进版本库 |
@@ -100,6 +102,18 @@ brew services start mysql@8.0
 mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'tracelink'; \
   CREATE DATABASE tracelink CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 ```
+
+### 知识库底座 RAGFlow（可选，一条命令）
+
+不装 RAGFlow 时系统按本地解析 + 全文降级运行，功能可用；要走向量检索与重排，再起这套：
+
+```bash
+bash scripts/ragflow-up.sh          # 起 RAGFlow + ES + MySQL + MinIO + Redis，并建知识库
+bash scripts/ragflow-up.sh status   # 看容器与 API 探测
+bash scripts/ragflow-up.sh stop     # 停容器，数据卷保留
+```
+
+首次启动拉 GB 级镜像，官方建议 4 核 / 16 GB 内存 / 50 GB 磁盘。脚本在 `RAGFLOW_API_KEY` 未设置时只起服务，按提示到 `http://localhost:10080` 建密钥后重跑即可；成功后它把 `RAGFLOW_ENABLED`、`RAGFLOW_BASE_URL`、`RAGFLOW_API_KEY`、`RAGFLOW_DATASET_ID` 写进 `deploy/ragflow/.env.tracelink`（已 gitignore），`source` 后重启后端，知识库页的检索来源会从「本地降级」变成 RAGFlow。编排来源、端口、数据卷与排障见 [deploy/ragflow/README.md](deploy/ragflow/README.md)。
 
 ## 里程碑进度
 

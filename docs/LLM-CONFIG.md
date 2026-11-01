@@ -112,7 +112,41 @@ OpenAITextEmbedding embedding = OpenAITextEmbedding.builder()
 
 `dimensions` 是请求参数，Ark 侧是否按此截断需要实测 `[To be confirmed]`。若不生效，以返回向量的实际长度为准，把它写进 `embedding_dim` 并保持全局一致。
 
-## 6 在 RAGFlow 里配置 Ark
+## 6 RAGFlow 部署与 Ark 配置
+
+### 6.1 一体化部署与知识库初始化
+
+RAGFlow 是独立的 Python 服务栈，不能作为 Java 依赖嵌进 tl-api，所以"融合"落在两处：代码层用适配器隔离（`KbRemotePort` / `RagFlowClient`），部署层用本仓库的编排把两者当成一套系统起。编排取自官方 `infiniflow/ragflow` v0.17.0 的 `docker/`，放在 `deploy/ragflow/`，只改了端口映射（避开本机 80/443）与 `.env` 默认值，其余原样以便对照升级。
+
+```bash
+bash scripts/ragflow-up.sh          # 起 RAGFlow + Elasticsearch + MySQL + MinIO + Redis
+bash scripts/ragflow-up.sh status   # 容器状态与 /api/v1 探测
+bash scripts/ragflow-up.sh stop     # 停容器，数据卷保留
+```
+
+脚本做四件事：补 `deploy/ragflow/.env`（首次从 `.env.example` 复制）、按 `--profile` 起全套并等 `http://127.0.0.1:${SVR_HTTP_PORT}/api/v1/datasets` 可访问、用 `RAGFLOW_API_KEY` 建知识库（已存在则复用，名称由 `RAGFLOW_DATASET_NAME` 定，默认 `tracelink`）、把启动参数写进 `deploy/ragflow/.env.tracelink`（600 权限，已 gitignore）。
+
+首次没有密钥时脚本只起服务，并提示去 `http://localhost:10080` 的用户设置页创建 API Key（入口随版本略有差异）。拿到密钥后：
+
+```bash
+export RAGFLOW_API_KEY=<密钥>
+bash scripts/ragflow-up.sh          # 建知识库并打印 dataset id
+source deploy/ragflow/.env.tracelink
+# 重启 tl-api 后生效：RAGFLOW_ENABLED=true、RAGFLOW_BASE_URL、RAGFLOW_API_KEY、RAGFLOW_DATASET_ID
+```
+
+端口分配如下，均可在 `deploy/ragflow/.env` 改：
+
+| 端口 | 用途 | 与本系统的关系 |
+|---|---|---|
+| 9380 | RAGFlow API | `RAGFLOW_BASE_URL` 默认指向它 |
+| 10080 | RAGFlow 自带 Web | 仅建密钥与运维，不对外暴露 |
+| 5455 | RAGFlow 自有 MySQL | 与本系统 MySQL（3306）分开，互不干扰 |
+| 1200 / 9000 / 9001 / 6379 | Elasticsearch / MinIO / Redis | 只被 RAGFlow 使用 |
+
+成功接管后，知识库页的检索来源标签从「本地降级」变为 RAGFlow，`retriever=RAGFLOW`；RAGFlow 挂掉或超时则按 `degrade-on-error=LOCAL_FULLTEXT` 回落本地全文，页面仍给出降级提示，不会出现空白结果。资源要求（官方建议 4 核 / 16 GB / 50 GB）、数据卷备份与排障见 `deploy/ragflow/README.md`。
+
+### 6.2 在 RAGFlow 里配置 Ark
 
 解析与检索用的向量、重排模型不经过本系统，要在 RAGFlow 的模型设置里加一次自定义提供商。它的模型设置支持添加 OpenAI 兼容的自定义服务，字段与 Ark 的接口形态一一对应 `[To be confirmed]`，具体位置以界面为准。
 
