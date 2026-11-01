@@ -16,6 +16,11 @@ target/
 logs/
 .local/
 
+# RAGFlow 本地实例：含密码的 env、启动参数与日志
+deploy/ragflow/.env
+deploy/ragflow/.env.tracelink
+deploy/ragflow/ragflow-logs/
+
 # 前端依赖与产物
 web/node_modules/
 web/dist/
