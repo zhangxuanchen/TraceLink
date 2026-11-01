@@ -12,7 +12,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v0.7：文档分类与已确认决策 → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、33 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 → 3 项新问题 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v0.8：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、33 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口 |
 | [docs/LLM-CONFIG.md](docs/LLM-CONFIG.md) | 火山引擎 Ark 接入：三套凭据的区别、配置项、示例 yml、与 AgentScope 接线、在 RAGFlow 里配置 Ark、连通性自检、轮换与配额 |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
 | [config/application-ai.yml](config/application-ai.yml) | 模型与 RAGFlow 配置示例，密钥从环境变量注入 |
@@ -46,6 +46,9 @@
 | Q11 | 试点为生产部与质量部，三到五名用户，两周 |
 | Q12 | 模型取 A+B：问答、知识检索、工单与统计只读查询；评价与五类建议先做，只进待确认队列，建单起草推迟 |
 | RAG 底座 | RAGFlow 承担解析与检索，AgentScope 串流程，先不引 Dify |
+| Q13 | 完成条件取 A：九条条件与权重一次上线，M3 落地；M1 先提示基础缺口 |
+| Q14 | 缺口提醒取 A：滞留三日提醒承担者、七日提醒负责人，阈值在 `sys_config` |
+| Q15 | 产品名保持 `TraceLink` |
 
 细节与代价记在 `docs/DESIGN.md` 1.6 与 `docs/ADR-001-RAG与Agent选型.md`。
 
@@ -62,7 +65,7 @@
 docker compose up -d
 docker compose ps            # 等 STATUS 显示 healthy，首次拉镜像约一分钟
 
-# 2 构建后端（Flyway 在应用启动时自动跑 V1、V2 迁移）
+# 2 构建后端（Flyway 在应用启动时自动跑 V1–V4 迁移）
 export JAVA_HOME=/Users/zxc/Library/Java/JavaVirtualMachines/jdk-21.0.13+9/Contents/Home
 mvn -DskipTests package
 java -jar tl-api/target/tracelink.jar
@@ -74,7 +77,7 @@ cd web && npm install && npm run dev     # 浏览器打开 http://localhost:5180
 cd web && npm run build && cd .. && mvn -DskipTests package
 ```
 
-默认账号 `admin` / `admin123`，种子数据含生产部、质量部与三名人员。服务端口取 `8090`（可用 `SERVER_PORT` 改），避开本机已有的 8080 与 5173 占用。只验证接口时用：
+默认账号 `admin` / `admin123`（张厚生，系统管理员）；演示账号 `xuwei`（许伟，生产部负责人）与 `wangxb`（王先兵，质量部执行者）同口令，用来验证负责人与执行者的数据范围差异。种子数据含总公司、生产部、质量部与三名人员。服务端口取 `8090`（可用 `SERVER_PORT` 改），避开本机已有的 8080 与 5173 占用。只验证接口时用：
 
 ```
 curl -s localhost:8090/api/v1/health
@@ -96,5 +99,9 @@ mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'tracelink'; \
 
 ## 下一步
 
-M0 骨架已可运行：登录、部门、职位、人员四个模块的增删改查与数据范围读取。接下来按 `docs/DESIGN.md` 第 10 章推进 M1 工单与追踪，M3 完成地图、M4 RAGFlow 与模型接入。仍需回答 `docs/DESIGN.md` 第 11 章的 3 项（Q13 条件集合、Q14 提醒阈值、Q15 产品名），并按 `docs/LLM-CONFIG.md` 第 7 节跑通两段 curl。
+M0 骨架与 M1 工单与追踪已可运行。M0 有登录、部门、职位、人员四个模块的增删改查；M1 有工单建单与派工、八条规则（R1–R8）、追踪记录与时间线、验收与退回、改期与催办、逾期池与阻碍看板、问题项与措施项关闭、审计留痕，接口前缀 `/api/v1/tasks`，页面为「工单中心」与工单详情。
+
+M1 的本机自检走法：用 `admin` 建一张生产部工单（负责人张厚生、主责许伟），换 `xuwei` 登录写进展与结果、提交验收，再用 `admin` 退回一次、`xuwei` 再提交、`admin` 通过；随后可看逾期池、阻碍看板与详情时间线。错误路径也已覆盖：跨部门读取返回 `TL-4032`、同部门同标题重复建单返回 `TL-4093`、进度回退 `TL-4222`、退回未填理由 `TL-4224`。
+
+接下来按 `docs/DESIGN.md` 第 10 章推进 M2 导入导出与统计图表，M3 完成地图（Q13 的九条条件与权重、Q14 的两级缺口提醒），M4 接 RAGFlow 与火山引擎 Ark（按 `docs/LLM-CONFIG.md` 第 7 节跑通两段 curl），M5 会话与评价建议。
 

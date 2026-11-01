@@ -14,6 +14,10 @@ public enum ErrorCode {
     DUPLICATE_REQUEST("TL-4092", 409, "幂等键冲突或重复提交"),
     DUPLICATE_OBJECT("TL-4093", 409, "唯一性冲突"),
     RULE_UNSATISFIED("TL-4221", 422, "业务规则不满足"),
+    PROGRESS_REGRESSION("TL-4222", 422, "进度回退"),
+    RESULT_WITHOUT_EVIDENCE("TL-4223", 422, "结果类记录缺少证据"),
+    REJECT_WITHOUT_REASON("TL-4224", 422, "退回未填理由"),
+    CRITERIA_UNJUDGED("TL-4225", 422, "验收条件存在未判定项"),
     RATE_LIMITED("TL-4291", 429, "触发限流"),
     INTERNAL_ERROR("TL-5001", 500, "内部错误"),
     DEPENDENCY_UNAVAILABLE("TL-5031", 503, "外部依赖不可用");

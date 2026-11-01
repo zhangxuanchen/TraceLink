@@ -44,7 +44,7 @@ const menus = [
   { name: 'depts', title: '部门管理' },
   { name: 'positions', title: '职位管理' },
   { name: 'employees', title: '人员管理' },
-  { name: 'tasks', title: '工单中心', phase: 'M1' },
+  { name: 'tasks', title: '工单中心' },
   { name: 'stats', title: '统计看板', phase: 'M2' },
   { name: 'map', title: '完成地图', phase: 'M3' },
   { name: 'kb', title: '知识库', phase: 'M4' },
