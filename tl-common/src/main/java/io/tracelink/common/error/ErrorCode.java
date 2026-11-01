@@ -18,6 +18,7 @@ public enum ErrorCode {
     RESULT_WITHOUT_EVIDENCE("TL-4223", 422, "结果类记录缺少证据"),
     REJECT_WITHOUT_REASON("TL-4224", 422, "退回未填理由"),
     CRITERIA_UNJUDGED("TL-4225", 422, "验收条件存在未判定项"),
+    QUESTION_INVALID("TL-4228", 422, "问题长度不合法"),
     RATE_LIMITED("TL-4291", 429, "触发限流"),
     INTERNAL_ERROR("TL-5001", 500, "内部错误"),
     DEPENDENCY_UNAVAILABLE("TL-5031", 503, "外部依赖不可用");

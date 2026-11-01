@@ -45,6 +45,31 @@ tracelink:
   import:
     max-rows: 5000
     similarity-threshold: 0.85
+  kb:
+    max-file-size-mb: ${KB_MAX_FILE_MB:50}
+    chunk:
+      target-size: 500
+      overlap-ratio: 0.15
+    search:
+      threshold: 0.2
+    history:
+      lookback-days: 365
+  ai:
+    ark:
+      base-url: ${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+      api-key: ${ARK_API_KEY:}
+      chat:
+        model: ${ARK_CHAT_MODEL:}
+        temperature: 0.2
+        max-tokens: 2048
+        timeout-seconds: 30
+    ragflow:
+      enabled: ${RAGFLOW_ENABLED:false}
+      base-url: ${RAGFLOW_BASE_URL:http://127.0.0.1:9380}
+      api-key: ${RAGFLOW_API_KEY:}
+      dataset-id: ${RAGFLOW_DATASET_ID:default}
+      timeout-seconds: 15
+      degrade-on-error: LOCAL_FULLTEXT
 
 management:
   endpoints:
