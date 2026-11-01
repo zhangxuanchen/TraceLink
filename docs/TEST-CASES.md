@@ -335,7 +335,7 @@ delete from daily_report; delete from task_metric; delete from export_task;
 - 来源：8.4 流程、断点检查表
 - 步骤：在工单详情右栏点未达成行的「去补证据」「去关问题」等动作
 - 预期：动作跳到对应编辑区或弹窗，完成后回到详情，缺口行在同一页面消失（实时算式，不等快照）
-- 状态：✅ 接口通过、页面已落地（2026-11-01）——九个动作 `actionUrl` 全部可解析且指向可执行的动作；详情页右栏「完成地图」按 `actions.canDispatch/canCheckin/canVerify/...` 给出「去处理」，G3/G4 滚动到问题项与措施项卡片，G1/G2/G9 打开对应弹窗，G8 只显示提示；动作成功回调 `loadGates()` 实时刷新。人工复核项：浏览器里点一轮跳转（脚本只断言接口与数据）
+- 状态：✅ 接口通过、浏览器端到端已核（2026-11-01）——九个动作 `actionUrl` 全部可解析且指向可执行的动作；详情页右栏「完成地图」按 `actions.canDispatch/canCheckin/canVerify/...` 给出「去处理」，G3/G4 滚动到问题项与措施项卡片，G1/G2/G9 打开对应弹窗，G8 只显示提示；动作成功回调 `loadGates()` 实时刷新。浏览器实测（`scripts/e2e-browser.mjs` 32 项断言）：九条条件齐全、7 条未达成给 6 个动作、点 G3 滚动到问题项、点「看事项链」带 `taskId` 回跳事项视图
 
 **TC-M3-05 部门缺口矩阵按条件排序**
 - 来源：CMP-2；4.10 矩阵段
@@ -537,6 +537,7 @@ delete from daily_report; delete from task_metric; delete from export_task;
 | 2026-11-01 | M0–M2 | `scripts/acceptance-m0-m2.sh` | 76/76 | admin | 首次全绿；台账 39 行、完成率 43.59%、回导 created 0 |
 | 2026-11-01 | M3 | M3-01 ~ M3-10 | 10/10 | admin | 完成地图四视图 + 九条件卡片；唯一键缺陷当场修复 |
 | 2026-11-01 | M3 | `scripts/acceptance-m3.sh` | 108/108 | admin | 压测 1050 张单 1.0–1.2s；两级提醒 3 条、复跑 0 条 |
+| 2026-11-01 | M3 | `scripts/e2e-browser.mjs` | 32/32 | admin | 浏览器实测四视图、详情九条件与跳转、执行者视角；截图在 `/tmp/tracelink-e2e` |
 | — | M4 | M4-01 ~ M4-07 | — | — | 待实现 |
 | — | M5 | M5-01 ~ M5-09 | — | — | 待实现 |
 

@@ -16,6 +16,7 @@
 | [docs/TEST-CASES.md](docs/TEST-CASES.md) | 验收用例 M0–M5：每条验收条件对应到可执行的 `TC-Mx-nn`，含前置、步骤、断言口径与执行记录；M0–M3 已跑通，M4–M5 先作实现契约 |
 | [scripts/acceptance-m0-m2.sh](scripts/acceptance-m0-m2.sh) | M0–M2 一键验收：76 项断言，含建单到验收一次退回、错误码、导入导出回导零重复 |
 | [scripts/acceptance-m3.sh](scripts/acceptance-m3.sh) | M3 一键验收：108 项断言，含九条条件逐条、权重即时生效、矩阵与聚合一致、快照陈旧、两级提醒幂等、保留裁剪与千单压测 |
+| [scripts/e2e-browser.mjs](scripts/e2e-browser.mjs) | 浏览器端到端验收：32 项断言，跑完成地图四视图、详情九条件与「去处理」跳转、执行者视角；需前后端已启动与 playwright-core |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
 | [config/application-ai.yml](config/application-ai.yml) | 模型与 RAGFlow 配置示例，密钥从环境变量注入 |
 | [config/.env.example](config/.env.example) | 环境变量键名，真实值写 `config/.env`，不进版本库 |
@@ -129,7 +130,7 @@ M1 的本机自检走法：用 `admin` 建一张生产部工单（负责人张�
 | 事项完成地图 | `GET /api/v1/completion-map/matter/{taskId}` | 沿父子与复发链按时间轴排同一事项的工单，反复停下的条件高亮 |
 | 快照与提醒 | `POST /api/v1/completion-map/snapshot`、`GET /api/v1/notifications`、`POST /notifications/{id}/read` | 当日快照可手动重算；三日提醒承担者、七日提醒负责人，只发新增与跨阈值，按收件人幂等 |
 
-九条条件与权重在 `gate_rule`（4 种类型 15 行，每类型合计一百），改库即时生效；矩阵、排行与事项视图读 `task_gate_snapshot` 日快照，快照失败时矩阵返回上一日并置 `stale`，页面给出数据截止时间与「立即重算」。`scripts/acceptance-m3.sh` 108 项断言覆盖九条逐条、权重即时生效、退回后 G9、矩阵与聚合一致、快照陈旧、两级提醒幂等、180 天保留裁剪与千单压测（1050 张约 1.0–1.2 秒）。
+九条条件与权重在 `gate_rule`（4 种类型 15 行，每类型合计一百），改库即时生效；矩阵、排行与事项视图读 `task_gate_snapshot` 日快照，快照失败时矩阵返回上一日并置 `stale`，页面给出数据截止时间与「立即重算」。`scripts/acceptance-m3.sh` 108 项断言覆盖九条逐条、权重即时生效、退回后 G9、矩阵与聚合一致、快照陈旧、两级提醒幂等、180 天保留裁剪与千单压测（1050 张约 1.0–1.2 秒）。浏览器侧另有 `node scripts/e2e-browser.mjs`，32 项断言把四视图、详情九条件与「去处理」跳转、执行者只读视角走一遍，截图落在 `/tmp/tracelink-e2e`。
 
 接下来 M4 接 RAGFlow 与火山引擎 Ark（按 `docs/LLM-CONFIG.md` 第 7 节跑通两段 curl），M5 会话与评价建议。
 
