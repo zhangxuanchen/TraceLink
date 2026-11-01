@@ -13,7 +13,8 @@
 | 文档 | 内容 |
 |---|---|
 | [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v0.9：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、33 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口；M1、M2 的验收记录在 11 章 |
-| [docs/LLM-CONFIG.md](docs/LLM-CONFIG.md) | 火山引擎 Ark 接入：三套凭据的区别、配置项、示例 yml、与 AgentScope 接线、在 RAGFlow 里配置 Ark、连通性自检、轮换与配额 |
+| [docs/TEST-CASES.md](docs/TEST-CASES.md) | 验收用例 M0–M5：每条验收条件对应到可执行的 `TC-Mx-nn`，含前置、步骤、断言口径与执行记录；M3–M5 先作实现契约 |
+| [scripts/acceptance-m0-m2.sh](scripts/acceptance-m0-m2.sh) | M0–M2 一键验收：76 项断言，含建单到验收一次退回、错误码、导入导出回导零重复 |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
 | [config/application-ai.yml](config/application-ai.yml) | 模型与 RAGFlow 配置示例，密钥从环境变量注入 |
 | [config/.env.example](config/.env.example) | 环境变量键名，真实值写 `config/.env`，不进版本库 |

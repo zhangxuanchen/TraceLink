@@ -7,6 +7,7 @@ import io.tracelink.domain.org.model.Dept;
 import io.tracelink.domain.org.model.Employee;
 import io.tracelink.domain.org.model.Position;
 import io.tracelink.domain.org.repository.DeptRepository;
+import io.tracelink.domain.org.repository.EmployeeAliasRepository;
 import io.tracelink.domain.org.repository.EmployeeRepository;
 import io.tracelink.domain.org.repository.PositionRepository;
 import io.tracelink.domain.org.rules.DeptTree;
@@ -25,13 +26,16 @@ public class EmployeeAppService {
     private final EmployeeRepository employeeRepository;
     private final DeptRepository deptRepository;
     private final PositionRepository positionRepository;
+    private final EmployeeAliasRepository aliasRepository;
 
     public EmployeeAppService(EmployeeRepository employeeRepository,
                               DeptRepository deptRepository,
-                              PositionRepository positionRepository) {
+                              PositionRepository positionRepository,
+                              EmployeeAliasRepository aliasRepository) {
         this.employeeRepository = employeeRepository;
         this.deptRepository = deptRepository;
         this.positionRepository = positionRepository;
+        this.aliasRepository = aliasRepository;
     }
 
     public PageResult<EmployeeView> page(String keyword, Long deptId, Integer status, int pageNo, int pageSize) {
@@ -115,6 +119,16 @@ public class EmployeeAppService {
                 .toList();
         if (!exact.isEmpty()) {
             return exact;
+        }
+        // 别名与本人名同权：样本里「张总」与「张厚生」是同一个人，导入与建议都靠这条解析
+        Long aliasId = aliasRepository.aliases().get(keyword);
+        if (aliasId != null) {
+            List<EmployeeView> byAlias = all.stream()
+                    .filter(e -> aliasId.equals(e.id()))
+                    .toList();
+            if (!byAlias.isEmpty()) {
+                return byAlias;
+            }
         }
         return all.stream()
                 .filter(e -> e.name() != null && (e.name().contains(keyword) || keyword.contains(e.name())))
