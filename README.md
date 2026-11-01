@@ -111,7 +111,7 @@ M1 的本机自检走法：用 `admin` 建一张生产部工单（负责人张�
 
 | 链路 | 接口 | 说明 |
 |---|---|---|
-| 导入 | `POST /api/v1/imports`、`GET /{id}/preview`、`PUT /{id}/rows/{rowId}`、`POST /{id}/confirm`、`POST /{id}/revoke` | 上传后惰性解析，预览返回双识别率与逐行动作（CREATE/MERGE/SKIP），行可在弹窗里改标题、主责、期限与结果/问题文本，确认后逐行事务入库 |
+| 导入 | `POST /api/v1/imports`、`GET /{id}/preview`、`PUT /{id}/rows/{rowId}`、`POST /{id}/confirm`、`DELETE /{id}`（撤回）、`GET /{id}/report.xlsx`（校验报告）、`GET /api/v1/reports`（日报页） | 上传后惰性解析，预览返回双识别率与逐行动作（CREATE/MERGE/SKIP），行可在弹窗里改标题、主责、期限与结果/问题文本，确认后逐行事务入库 |
 | 导出 | `POST /api/v1/exports`、`GET /{id}/download` | 五个模板：DAILY 日报回填（区间逐日一页、版式复刻源文件）、WEEKLY 周报、LEDGER 工单台账、PERF 绩效数据、CHART 统计图表 |
 | 统计 | `GET /api/v1/stats/overview`、`/trend`、`/process`、`/person` | 七个 KPI、趋势、状态分布、部门完成率、逾期分布与前十、复发榜、类型前十、部门周热力、计划与完成对比、人员散点/雷达/漏斗，共 12 类图表，前端用自研 SVG 组件渲染 |
 
