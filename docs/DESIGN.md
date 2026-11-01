@@ -1,6 +1,6 @@
 # TraceLink 工单系统设计文档
 
-版本 v0.9　编写日期 2026-11-01　状态 设计基线（Q1–Q15 全部确认；第 11 章已收口；M1 工单与追踪、M2 导入导出与统计已实现并通过验收）
+版本 v1.0　编写日期 2026-11-01　状态 设计基线（Q1–Q15 全部确认；第 11 章已收口；M1 工单与追踪、M2 导入导出与统计、M3 完成地图已实现并通过验收）
 
 ## 1 文档定位与需求来源
 
@@ -849,6 +849,9 @@ sequenceDiagram
 | CMP-2 | `GET /completion-map/matrix` | 部门缺口矩阵 | 负责人及以上 | — |
 | CMP-3 | `GET /completion-map/gaps` | 缺口聚合与滞留排行 | 负责人及以上 | — |
 | CMP-4 | `GET /completion-map/matter/{taskId}` | 事项完成地图 | 负责人及以上 | — |
+| CMP-5 | `POST /completion-map/snapshot` | 手动重算当日快照 | 负责人及以上 | 按日期覆盖 |
+| NTF-1 | `GET /notifications` | 我的缺口提醒 | 本人 | — |
+| NTF-2 | `POST /notifications/{id}/read` | 标记提醒已读 | 收件人本人 | 重复调用无副作用 |
 | IMP-1 | `POST /imports` | 上传工作簿 | 负责人及以上 | 文件哈希 |
 | IMP-2 | `GET /imports/{id}/preview` | 三步向导数据 | 上传人或管理者 | — |
 | IMP-3 | `POST /imports/{id}/confirm` | 确认入库 | 上传人或管理者 | 批次状态 |
@@ -953,11 +956,52 @@ sequenceDiagram
 | 操作 | `GET /api/v1/completion-map/matrix` |
 | 用途 | 部门缺口矩阵，行是工单，列是条件 |
 | 鉴权 | Bearer；需 `stats:view`；`deptId` 须在数据范围内 |
-| 查询参数 | `deptId` 长整 必填；`status` 枚举 可选 默认取在办状态；`taskType` 字符串 可选；`page` 与 `pageSize` 分页 |
-| 成功响应 | `200`；体 `{ snapshotAt, stale, columns:[{ code, name }], rows:[{ taskId, taskNo, title, assigneeName, overdue, completionRate, cells:[{ code, state, gapDays }] }] }` |
+| 查询参数 | `deptId` 长整 必填；`taskType` 字符串 可选；`page` 与 `pageSize` 分页；行固定取在办状态（`PENDING`、`IN_PROGRESS`、`BLOCKED`、`SUBMITTED`） |
+| 成功响应 | `200`；体 `{ snapshotAt, stale, columns:[{ code, name, todoCount }], rows:[{ taskId, taskNo, title, assigneeName, overdue, completionRate, cells:[{ code, state, gapDays }] }], total }` |
 | 失败响应 | `403 TL-4032` 部门超出数据范围；`404 TL-4041` 部门不存在 |
 | 数据截止 | `snapshotAt` 是当日快照时间，读的是 `task_gate_snapshot`；快照任务失败时返回上一日并把 `stale` 置真，页面标出数据截止时间 |
+| 排序 | 接口按「逾期优先、其次完成率低」返回；列内按 `TODO → DONE → NA`、同状态按 `gapDays` 降序由前端排序，避免每次点表头回表 |
 | 幂等 | 只读，无需幂等 |
+
+| 字段 | 内容 |
+|---|---|
+| 操作 | `GET /api/v1/completion-map/gaps` |
+| 用途 | 缺口聚合与滞留排行，供部门周会看「卡在哪一步、卡在谁手里」 |
+| 鉴权 | Bearer；需 `stats:view`；`deptId` 缺省取调用人可见范围 |
+| 查询参数 | `deptId` 长整 可选 |
+| 成功响应 | `200`；体 `{ snapshotAt, stale, deptId, totalTodo, byGate:[{ code, name, todoCount, maxGapDays }], byHolder:[{ holderId, holderName, todoCount, maxGapDays }], top:[{ taskId, taskNo, title, gateCode, gateName, holderName, gapDays }] }` |
+| 口径 | 与矩阵同一份快照，`totalTodo` 与矩阵各列 `todoCount` 合计相等；`top` 按 `gapDays` 降序取前二十 |
+| 幂等 | 只读，无需幂等 |
+
+| 字段 | 内容 |
+|---|---|
+| 操作 | `GET /api/v1/completion-map/matter/{taskId}` |
+| 用途 | 一件事从父单到子单到复发单的达成顺序，找反复停下的条件 |
+| 鉴权 | Bearer；需 `stats:view`；根工单须在数据范围内 |
+| 成功响应 | `200`；体 `{ matterTitle, stuckGateCode, stuckCount, tasks:[{ taskId, taskNo, title, statusLabel, createdAt, gates:[...] }] }` |
+| 口径 | 沿 `parent_id` 与 `recurrence_of` 收齐同一事项的工单，按时间轴排列；某条件在多张单上均未达成时判为「反复停下」 |
+| 幂等 | 只读，无需幂等 |
+
+| 字段 | 内容 |
+|---|---|
+| 操作 | `POST /api/v1/completion-map/snapshot` |
+| 用途 | 手动重算某日快照，供凌晨任务失败后补跑、验收与页面「立即重算」 |
+| 鉴权 | Bearer；需 `stats:view` |
+| 查询参数 | `date` 日期 可选 默认今天 |
+| 成功响应 | `200`；体 `{ date, taskCount, cellCount, notificationCount, prunedDays, durationMs }` |
+| 口径 | 同一日期重跑按 `(task_id, snapshot_date, gate_code)` 覆盖写，不叠加；缺口滞留天数继承上一快照再加相隔天数，首次记 1 |
+| 幂等 | 按日期覆盖；提醒按 `(task_id, gate_code, level, episode_start, recipient_id)` 唯一键，重跑不重发 |
+
+| 字段 | 内容 |
+|---|---|
+| 操作 | `GET /api/v1/notifications` 与 `POST /api/v1/notifications/{id}/read` |
+| 用途 | 我的缺口提醒列表与标记已读 |
+| 鉴权 | Bearer；只返回 `recipient_id` 为调用人的记录 |
+| 查询参数 | `unreadOnly` 布尔 可选 默认 false；`limit` 整数 可选 默认 20 |
+| 成功响应 | `200`；体 `{ total, records:[{ id, taskId, taskNo, gateCode, gateName, level, levelLabel, gapDays, message, read, createdAt }] }`；已读接口返回 `true` |
+| 失败响应 | `404 TL-4041` 提醒不存在或不是发给调用人 |
+| 口径 | 三日（`alert.gap.first`）只发承担者，七日（`alert.gap.second`）发承担者与负责人；只对新增缺口与刚跨过阈值的缺口发，不每日全量重发 |
+| 幂等 | 唯一键含收件人，同一缺口同一级别同一周期只发一条 |
 
 ### 5.3 错误码
 
@@ -1262,8 +1306,41 @@ CREATE TABLE task_gate_snapshot (
   gap_days   INT         NOT NULL DEFAULT 0 COMMENT '该缺口已持续天数',
   holder_id  BIGINT      NULL COMMENT '缺口承担者',
   UNIQUE KEY uk_snap (snap_date, task_id, gate_code),
-  KEY idx_snap_dept (snap_date, dept_id, gate_code)
+  KEY idx_snap_dept (snap_date, dept_id, gate_code),
+  KEY idx_snap_task (task_id, snap_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='完成条件日快照 保留一百八十天';
+
+CREATE TABLE gate_gap_daily (
+  id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+  snap_date    DATE        NOT NULL,
+  dept_id      BIGINT      NOT NULL,
+  gate_code    VARCHAR(16) NOT NULL,
+  done_count   INT         NOT NULL DEFAULT 0,
+  todo_count   INT         NOT NULL DEFAULT 0,
+  na_count     INT         NOT NULL DEFAULT 0,
+  max_gap_days INT         NOT NULL DEFAULT 0,
+  updated_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_gap_daily (snap_date, dept_id, gate_code),
+  KEY idx_gap_daily_date (snap_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='缺口按日按部门按条件聚合 快照回收后仍可看趋势';
+
+CREATE TABLE notification (
+  id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+  recipient_id  BIGINT       NOT NULL COMMENT '收件人 承担者或负责人',
+  type          VARCHAR(16)  NOT NULL DEFAULT 'GAP',
+  task_id       BIGINT       NOT NULL,
+  task_no       VARCHAR(32)  NULL,
+  gate_code     VARCHAR(16)  NOT NULL,
+  level         VARCHAR(16)  NOT NULL COMMENT 'NEW FIRST SECOND',
+  gap_days      INT          NOT NULL DEFAULT 0,
+  episode_start DATE         NOT NULL COMMENT '同一缺口周期的起点 用于幂等',
+  title         VARCHAR(200) NOT NULL,
+  content       VARCHAR(500) NOT NULL,
+  read_flag     TINYINT      NOT NULL DEFAULT 0,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_notify_episode (task_id, gate_code, level, episode_start, recipient_id),
+  KEY idx_notify_recipient (recipient_id, read_flag, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='缺口提醒收件箱 只推新增与超阈值 不每日重发';
 
 CREATE TABLE chat_session (
   id          BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -2487,6 +2564,8 @@ Q1 到 Q15 已在 1.6 全部落定，本章不再保留待确认项。三项默�
 M1 的验收已按第 10 章走通：生产部一条整改事项从建单、写追踪记录、受阻与恢复、提交、验收退回、再次提交到通过，退回次数记 1、`closure_level` 置 STRONG；逾期池与阻碍看板在测试环境用调整期限的方式按天可见。此前关于九条条件一次上线还是先上四条的讨论，以及三日与七日阈值的取舍过程，保留在 git 历史里，不再占据正文。
 
 M2 的验收同样走通，用的是 83 MB 的真实样本（10 个工作表）。首次导入：明细行 61 行、完整识别 58 行（行识别率 95.1%）、其中 57 行认到主责，人名提及 131 次全部命中（100%），两项门槛分别 95% 与 92%，确认后建单 57 张、跳过 4 行、失败 0 行。同一文件重复上传直接返回原批次（`duplicate=true`），工单数量不变。五种模板各生成一份：日报回填按七天出七页、周报 21 行、台账 39 行、绩效 20 行、图表 86 行。把导出的日报原样导回，识别率两项都是 100%，预览动作 `CREATE 0 / MERGE 0 / SKIP 57`，确认后新增 0 张、失败 0 行，工单总数保持 62 不变，且 `daily_report` 与 `task_metric` 按日期覆盖而非叠加。这一轮同时修掉四处会让验收数字失真的问题：`task.source_ref` 未序列化导致整批入库失败、行指纹带页名导致回导重复建单、日报「负责人」列写成汇报人导致认错责任人、台账只按创建时间取数导致空表与完成率超过 100%。
+
+M3 的验收也已走通，口径与实现一致：九条条件与权重落在 `gate_rule`（4 种类型共 15 行，每类型权重合计一百），单工单完成地图是实时算式，部门矩阵、缺口排行与事项地图读 `task_gate_snapshot` 日快照。权重改库即时生效（巡查类 G6 由 10 改 20 后同一张单完成率 4%→7%，无需重启）；`PENDING` 单不写追踪记录时 G1 未达成，首条 `PROGRESS` 落库后 G1 立刻达成（派工只改主责与期限，不改状态）；退回后 G9 回到未达成且 `hint` 带退回理由。快照任务造 1050 张在办单实测约 1 秒（976 ms–1.2 s），`cellCount` 恒等于 `taskCount × 9`，超过 180 天的明细被裁剪、`gate_gap_daily` 保留聚合计数。两级提醒按昨日快照滞留天数去重：C 单满三日只发承担者、B 单满七日发承担者与负责人，共 3 条；同日重跑 0 条。这一轮修掉一处会让提醒漏发的缺陷：原唯一键 `(task_id, gate_code, level, episode_start)` 在七日级同时插入承担者与负责人时撞键，V8 迁移把 `recipient_id` 加入唯一键，`exists` 判重也改为按收件人。
 
 后续要观察的三件事不是待确认项，而是试点期的校准依据：逾期池里的单是否真的变少、缺口提醒是否有人响应、会话里的提问是否被带引用的回答接住（第 10 章的试点判据）。
 
