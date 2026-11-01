@@ -15,7 +15,7 @@ const routes = [
       { path: 'tasks/:id', name: 'task-detail', component: () => import('../views/TaskDetailView.vue'), meta: { title: '工单详情' } },
       { path: 'stats', name: 'stats', component: () => import('../views/StatsView.vue'), meta: { title: '统计看板' } },
       { path: 'import', name: 'import', component: () => import('../views/ImportView.vue'), meta: { title: '导入导出' } },
-      { path: 'map', name: 'map', component: () => import('../views/ComingSoonView.vue'), meta: { title: '完成地图', phase: 'M3' } },
+      { path: 'map', name: 'map', component: () => import('../views/CompletionMapView.vue'), meta: { title: '完成地图' } },
       { path: 'kb', name: 'kb', component: () => import('../views/ComingSoonView.vue'), meta: { title: '知识库', phase: 'M4' } },
       { path: 'chat', name: 'chat', component: () => import('../views/ComingSoonView.vue'), meta: { title: '会话助手', phase: 'M5' } }
     ]

@@ -39,6 +39,24 @@ public class TaskCheckinRepositoryImpl implements TaskCheckinRepository {
     }
 
     @Override
+    public List<TaskCheckin> listByTaskIds(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return List.of();
+        }
+        List<TaskCheckin> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < taskIds.size(); i += 500) {
+            List<Long> part = taskIds.subList(i, Math.min(i + 500, taskIds.size()));
+            rows.addAll(checkinMapper.selectList(new QueryWrapper<TaskCheckinEntity>()
+                            .in("task_id", part)
+                            .orderByDesc("check_date")
+                            .orderByDesc("created_at")
+                            .orderByDesc("id"))
+                    .stream().map(TaskCheckinRepositoryImpl::toModel).toList());
+        }
+        return rows;
+    }
+
+    @Override
     public int maxProgress(Long taskId) {
         List<TaskCheckinEntity> rows = checkinMapper.selectList(new QueryWrapper<TaskCheckinEntity>()
                 .eq("task_id", taskId)

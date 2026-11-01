@@ -40,4 +40,13 @@ public interface TaskRepository {
 
     /** 导入去重：取某部门自某时刻起的全部未删除工单用于标题比对 */
     List<Task> findForDedup(Long deptId, LocalDateTime since);
+
+    /** 完成地图快照用：全部在办工单（待接单、进行中、阻碍中、待验收） */
+    List<Task> findOpenAll(int limit);
+
+    /** 事项完成地图用：某工单的直接子工单 */
+    List<Task> findChildren(Long parentId);
+
+    /** 事项完成地图用：由某工单复发而来的后续工单 */
+    List<Task> findRecurrencesOf(Long taskId);
 }

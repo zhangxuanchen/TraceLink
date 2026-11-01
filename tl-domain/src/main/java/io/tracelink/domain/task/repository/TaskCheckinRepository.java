@@ -11,6 +11,9 @@ public interface TaskCheckinRepository {
 
     List<TaskCheckin> listByTask(Long taskId);
 
+    /** 快照批量判定用：一次取多张工单的追踪记录 */
+    List<TaskCheckin> listByTaskIds(List<Long> taskIds);
+
     int maxProgress(Long taskId);
 
     int countByResultType(Long taskId, CheckinResultType resultType);

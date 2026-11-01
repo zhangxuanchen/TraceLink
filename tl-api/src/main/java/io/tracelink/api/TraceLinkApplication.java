@@ -9,7 +9,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @MapperScan({"io.tracelink.infra.org.mapper", "io.tracelink.infra.task.mapper", "io.tracelink.infra.audit.mapper",
         "io.tracelink.infra.importing.mapper", "io.tracelink.infra.report.mapper",
-        "io.tracelink.infra.exporting.mapper", "io.tracelink.infra.stat.mapper"})
+        "io.tracelink.infra.exporting.mapper", "io.tracelink.infra.stat.mapper",
+        "io.tracelink.infra.gate.mapper"})
 public class TraceLinkApplication {
 
     public static void main(String[] args) {

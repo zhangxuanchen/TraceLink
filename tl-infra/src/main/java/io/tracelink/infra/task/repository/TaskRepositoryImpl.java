@@ -201,6 +201,35 @@ public class TaskRepositoryImpl implements TaskRepository {
         return taskMapper.selectList(wrapper).stream().map(TaskRepositoryImpl::toModel).toList();
     }
 
+    @Override
+    public List<Task> findOpenAll(int limit) {
+        return taskMapper.selectList(new QueryWrapper<TaskEntity>()
+                        .eq("deleted", 0)
+                        .in("status", OPEN_STATUS)
+                        .orderByAsc("dept_id")
+                        .orderByAsc("id")
+                        .last("LIMIT " + Math.max(1, limit)))
+                .stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
+    @Override
+    public List<Task> findChildren(Long parentId) {
+        return taskMapper.selectList(new QueryWrapper<TaskEntity>()
+                        .eq("deleted", 0)
+                        .eq("parent_id", parentId)
+                        .orderByAsc("created_at"))
+                .stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
+    @Override
+    public List<Task> findRecurrencesOf(Long taskId) {
+        return taskMapper.selectList(new QueryWrapper<TaskEntity>()
+                        .eq("deleted", 0)
+                        .eq("recurrence_of", taskId)
+                        .orderByAsc("created_at"))
+                .stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
     private QueryWrapper<TaskEntity> buildWrapper(TaskQuery query) {
         QueryWrapper<TaskEntity> wrapper = new QueryWrapper<TaskEntity>().eq("deleted", 0);
         if (query.keyword() != null && !query.keyword().isBlank()) {

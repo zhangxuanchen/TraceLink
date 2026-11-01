@@ -38,6 +38,23 @@ public class TaskActionRepositoryImpl implements TaskActionRepository {
     }
 
     @Override
+    public List<TaskAction> listByTaskIds(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return List.of();
+        }
+        List<TaskAction> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < taskIds.size(); i += 500) {
+            List<Long> part = taskIds.subList(i, Math.min(i + 500, taskIds.size()));
+            rows.addAll(actionMapper.selectList(new QueryWrapper<TaskActionEntity>()
+                            .in("task_id", part)
+                            .orderByAsc("task_id")
+                            .orderByAsc("seq"))
+                    .stream().map(TaskActionRepositoryImpl::toModel).toList());
+        }
+        return rows;
+    }
+
+    @Override
     public TaskAction findById(Long id) {
         TaskActionEntity entity = actionMapper.selectById(id);
         return entity == null ? null : toModel(entity);

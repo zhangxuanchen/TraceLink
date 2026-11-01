@@ -55,7 +55,7 @@
             <ul>
               <li v-for="gap in detail.submitGaps" :key="gap">{{ gap }}</li>
             </ul>
-            <p class="muted">完成条件矩阵在 M3 上线，这里先提示基础缺口。</p>
+            <p class="muted">完整的九条完成条件见右栏完成地图，那里会指出还差哪一步、由谁补。</p>
           </div>
         </div>
 
@@ -72,7 +72,7 @@
           <p v-else class="muted">未设置验收条件，提交时按结果说明判定。</p>
         </div>
 
-        <div class="card block">
+        <div id="issues" class="card block">
           <h3 class="block-title">问题项 <span class="muted">{{ openIssueCount }} 条未关闭</span></h3>
           <ul v-if="detail.issues.length" class="list">
             <li v-for="issue in detail.issues" :key="issue.id" class="item-row">
@@ -86,7 +86,7 @@
           <p v-else class="muted">没有记录问题项。</p>
         </div>
 
-        <div class="card block">
+        <div id="actions" class="card block">
           <h3 class="block-title">措施项 <span class="muted">{{ openActionCount }} 条未完成</span></h3>
           <ul v-if="detail.actions.length" class="list">
             <li v-for="action in detail.actions" :key="action.id" class="item-row">
@@ -104,6 +104,37 @@
       </div>
 
       <div class="right">
+        <div class="card block gate-block">
+          <h3 class="block-title">
+            完成地图
+            <span v-if="gateMap" class="muted">达成 {{ gateMap.completionRate }}%</span>
+            <button class="btn-link head-link" @click="openMatter">看事项链</button>
+          </h3>
+          <div v-if="gateMap" class="gate-progress">
+            <div class="bar"><i :style="{ width: gateMap.completionRate + '%' }"></i></div>
+            <span class="num">{{ gateMap.completionRate }}%</span>
+          </div>
+          <ul v-if="gateMap" class="gate-list">
+            <li v-for="gate in gateMap.gates" :key="gate.code" class="gate-item"
+                :class="{ 'gate-done': gate.state === 'DONE', 'gate-todo': gate.state === 'TODO', 'gate-na': gate.state === 'NA' }">
+              <span class="gate-code num">{{ gate.code }}</span>
+              <div class="gate-main">
+                <div class="gate-top">
+                  <strong>{{ gate.name }}</strong>
+                  <span class="tag" :class="gateTagClass(gate)">{{ gate.stateLabel }}</span>
+                  <span v-if="gate.state === 'TODO' && gate.gapDays > 1" class="tag tag-warn">滞留 {{ gate.gapDays }} 天</span>
+                </div>
+                <div class="gate-hint">{{ gate.hint }}</div>
+                <div class="gate-meta muted">
+                  承担者 {{ gate.holderName || '—' }}<span v-if="!gate.required"> · 非必需条件</span>
+                </div>
+              </div>
+              <button v-if="canActGate(gate)" class="btn-link gate-action" @click="actGate(gate)">去处理</button>
+            </li>
+          </ul>
+          <div v-else class="empty">完成地图暂不可读</div>
+        </div>
+
         <div class="card block">
           <h3 class="block-title">时间线</h3>
           <div v-if="loadingTimeline" class="empty">加载中…</div>
@@ -296,6 +327,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '../components/BaseModal.vue'
 import { employeeApi } from '../api/org.js'
+import { gateApi } from '../api/gate.js'
 import { taskApi } from '../api/task.js'
 import {
   CHECKIN_TYPES,
@@ -311,6 +343,7 @@ const route = useRoute()
 const router = useRouter()
 const detail = ref(null)
 const timeline = ref([])
+const gateMap = ref(null)
 const employees = ref([])
 const loadingTimeline = ref(true)
 const error = ref('')
@@ -348,11 +381,54 @@ async function load() {
     if (!employees.value.length) {
       employees.value = await employeeApi.options()
     }
+    await loadGates()
   } catch (e) {
     error.value = e.message
   } finally {
     loadingTimeline.value = false
   }
+}
+
+async function loadGates() {
+  try {
+    gateMap.value = await gateApi.map(route.params.id)
+  } catch (e) {
+    gateMap.value = null
+  }
+}
+
+function gateTagClass(gate) {
+  if (gate.state === 'DONE') return 'tag-ok'
+  if (gate.state === 'TODO') return 'tag-bad'
+  return ''
+}
+
+function canActGate(gate) {
+  if (gate.state !== 'TODO') return false
+  const actions = task.value?.actions || {}
+  if (gate.code === 'G1') return Boolean(actions.canDispatch)
+  if (gate.code === 'G2') return Boolean(actions.canReschedule)
+  if (gate.code === 'G9') return Boolean(actions.canVerify || actions.canSubmit)
+  if (gate.code === 'G8') return false
+  return Boolean(actions.canCheckin)
+}
+
+function actGate(gate) {
+  if (gate.code === 'G1') return openDispatch()
+  if (gate.code === 'G2') return openReschedule()
+  if (gate.code === 'G9') return task.value.actions.canVerify ? openVerify() : openSubmit()
+  if (gate.code === 'G3') return scrollTo('issues')
+  if (gate.code === 'G4') return scrollTo('actions')
+  return openCheckin()
+}
+
+function scrollTo(id) {
+  const target = document.getElementById(id)
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+function openMatter() {
+  router.push({ name: 'map', query: { taskId: String(route.params.id) } })
 }
 
 function openModal(mode, form, checks = []) {
@@ -483,6 +559,7 @@ async function closeIssue(issue) {
   try {
     const data = await taskApi.closeIssue(task.value.id, issue.id)
     detail.value = data
+    await loadGates()
   } catch (e) {
     error.value = e.message
   }
@@ -494,6 +571,7 @@ async function doneAction(action) {
   try {
     const data = await taskApi.doneAction(task.value.id, action.id)
     detail.value = data
+    await loadGates()
   } catch (e) {
     error.value = e.message
   }
@@ -658,6 +736,84 @@ onMounted(load)
 .muted {
   color: var(--txt-3);
   font-size: 12px;
+}
+
+.head-link {
+  float: right;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.gate-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.gate-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gate-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--divider);
+}
+
+.gate-item:last-child {
+  border-bottom: none;
+}
+
+.gate-code {
+  width: 22px;
+  flex: none;
+  color: var(--txt-3);
+  font-size: 12px;
+}
+
+.gate-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.gate-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.gate-hint {
+  margin-top: 3px;
+  color: var(--txt-2);
+  font-size: 12px;
+}
+
+.gate-meta {
+  margin-top: 2px;
+}
+
+.gate-action {
+  flex: none;
+  font-size: 12px;
+}
+
+.gate-done .gate-code {
+  color: var(--ok);
+}
+
+.gate-todo .gate-code {
+  color: var(--warn);
+}
+
+.gate-na {
+  opacity: 0.62;
 }
 
 .timeline {

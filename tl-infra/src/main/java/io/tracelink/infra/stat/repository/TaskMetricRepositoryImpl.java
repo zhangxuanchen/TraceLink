@@ -78,6 +78,17 @@ public class TaskMetricRepositoryImpl implements TaskMetricRepository {
                 .stream().map(TaskMetricRepositoryImpl::toModel).toList();
     }
 
+    @Override
+    public List<TaskMetric> findByTaskIds(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return List.of();
+        }
+        return mapper.selectList(new QueryWrapper<TaskMetricEntity>()
+                        .in("task_id", taskIds)
+                        .orderByAsc("stat_date"))
+                .stream().map(TaskMetricRepositoryImpl::toModel).toList();
+    }
+
     public static TaskMetric toModel(TaskMetricEntity e) {
         TaskMetric m = new TaskMetric();
         m.id = e.id;

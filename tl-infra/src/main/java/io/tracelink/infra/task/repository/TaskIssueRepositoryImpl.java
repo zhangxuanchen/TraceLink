@@ -39,6 +39,23 @@ public class TaskIssueRepositoryImpl implements TaskIssueRepository {
     }
 
     @Override
+    public List<TaskIssue> listByTaskIds(List<Long> taskIds) {
+        if (taskIds == null || taskIds.isEmpty()) {
+            return List.of();
+        }
+        List<TaskIssue> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < taskIds.size(); i += 500) {
+            List<Long> part = taskIds.subList(i, Math.min(i + 500, taskIds.size()));
+            rows.addAll(issueMapper.selectList(new QueryWrapper<TaskIssueEntity>()
+                            .in("task_id", part)
+                            .orderByAsc("task_id")
+                            .orderByAsc("seq"))
+                    .stream().map(TaskIssueRepositoryImpl::toModel).toList());
+        }
+        return rows;
+    }
+
+    @Override
     public TaskIssue findById(Long id) {
         TaskIssueEntity entity = issueMapper.selectById(id);
         return entity == null ? null : toModel(entity);

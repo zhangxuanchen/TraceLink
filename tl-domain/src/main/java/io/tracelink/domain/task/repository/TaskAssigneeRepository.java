@@ -10,5 +10,8 @@ public interface TaskAssigneeRepository {
 
     List<TaskAssignee> listByTask(Long taskId);
 
+    /** 快照与矩阵按数据范围过滤用：一次取多张工单的参与人 */
+    List<TaskAssignee> listByTaskIds(List<Long> taskIds);
+
     boolean exists(Long taskId, Long employeeId);
 }

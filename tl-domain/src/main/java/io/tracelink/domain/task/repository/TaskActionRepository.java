@@ -10,6 +10,9 @@ public interface TaskActionRepository {
 
     List<TaskAction> listByTask(Long taskId);
 
+    /** 快照批量判定用：一次取多张工单的措施项 */
+    List<TaskAction> listByTaskIds(List<Long> taskIds);
+
     TaskAction findById(Long id);
 
     void markDone(Long id);

@@ -47,7 +47,7 @@ const menus = [
   { name: 'tasks', title: '工单中心' },
   { name: 'stats', title: '统计看板' },
   { name: 'import', title: '导入导出' },
-  { name: 'map', title: '完成地图', phase: 'M3' },
+  { name: 'map', title: '完成地图' },
   { name: 'kb', title: '知识库', phase: 'M4' },
   { name: 'chat', title: '会话助手', phase: 'M5' }
 ]
