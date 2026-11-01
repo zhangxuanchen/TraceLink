@@ -1,0 +1,48 @@
+# TraceLink 模型配置（profile: ai）
+# 引入方式：spring.profiles.include: ai 或 spring.config.additional-location
+# 说明见 docs/LLM-CONFIG.md，密钥值来自 config/.env
+
+trace-link:
+  ai:
+    provider: volcengine-ark
+    ark:
+      base-url: ${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+      api-key: ${ARK_API_KEY}
+      chat:
+        model: ${ARK_CHAT_MODEL}
+        temperature: 0.2
+        max-tokens: 2048
+        stream: true
+        timeout: 30s
+      embedding:
+        model: ${ARK_EMBEDDING_MODEL}
+        dim: ${ARK_EMBEDDING_DIM:1024}
+        batch-size: 16
+        timeout: 10s
+    retry:
+      max-attempts: 2
+      initial-backoff: 1s
+      max-backoff: 8s
+    guard:
+      schema-retry: 1
+      on-schema-failure: RULE_FALLBACK
+      record-cost: true
+    # 检索走 RAGFlow，本系统只经 Knowledge 接口调用
+    ragflow:
+      base-url: ${RAGFLOW_BASE_URL}
+      api-key: ${RAGFLOW_API_KEY}
+      timeout: 15s
+      top-k: 8
+      similarity-threshold: 0.2
+      degrade-on-error: LOCAL_FULLTEXT
+
+# AgentScope 的 OpenAI 适配器指向同一组值，键名取自 OpenAIProperties
+agentscope:
+  model:
+    provider: openai
+  openai:
+    enabled: true
+    api-key: ${ARK_API_KEY}
+    base-url: ${ARK_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+    model-name: ${ARK_CHAT_MODEL}
+    stream: true

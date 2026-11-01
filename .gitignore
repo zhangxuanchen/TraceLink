@@ -1,0 +1,27 @@
+# 密钥与本地配置，不进版本库
+.env
+.env.local
+config/.env
+config/*.local.yml
+config/application-local.yml
+
+# 构建产物
+target/
+*.jar
+*.war
+
+# 运行期目录
+/data/files/
+/data/logs/
+logs/
+.local/
+
+# 前端依赖与产物
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
