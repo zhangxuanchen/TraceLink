@@ -22,6 +22,11 @@ spring:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
     default-property-inclusion: non_null
+  servlet:
+    multipart:
+      max-file-size: ${UPLOAD_MAX_FILE:100MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST:110MB}
+      file-size-threshold: 1MB
 
 mybatis-plus:
   configuration:
@@ -35,6 +40,11 @@ tracelink:
     jwt:
       secret: ${JWT_SECRET:tracelink-dev-secret-key-please-change-0123456789}
       ttl-minutes: 480
+  storage:
+    root: ${TL_STORAGE_ROOT:./data/files}
+  import:
+    max-rows: 5000
+    similarity-threshold: 0.85
 
 management:
   endpoints:

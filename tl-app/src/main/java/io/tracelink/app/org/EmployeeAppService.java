@@ -103,6 +103,25 @@ public class EmployeeAppService {
                 .toList();
     }
 
+    /** ORG-3 姓名解析：导出的日报、智能会话里出现的人名都走这里落成员工 */
+    public List<EmployeeView> resolve(String name) {
+        List<EmployeeView> all = options();
+        if (name == null || name.isBlank()) {
+            return List.of();
+        }
+        String keyword = name.trim();
+        List<EmployeeView> exact = all.stream()
+                .filter(e -> keyword.equals(e.name()))
+                .toList();
+        if (!exact.isEmpty()) {
+            return exact;
+        }
+        return all.stream()
+                .filter(e -> e.name() != null && (e.name().contains(keyword) || keyword.contains(e.name())))
+                .limit(5)
+                .toList();
+    }
+
     private void validate(EmployeeCommand cmd, Long excludeId) {
         if (cmd.empNo() == null || cmd.empNo().isBlank()) {
             throw BizException.invalid("工号不能为空");

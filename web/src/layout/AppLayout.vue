@@ -45,7 +45,8 @@ const menus = [
   { name: 'positions', title: '职位管理' },
   { name: 'employees', title: '人员管理' },
   { name: 'tasks', title: '工单中心' },
-  { name: 'stats', title: '统计看板', phase: 'M2' },
+  { name: 'stats', title: '统计看板' },
+  { name: 'import', title: '导入导出' },
   { name: 'map', title: '完成地图', phase: 'M3' },
   { name: 'kb', title: '知识库', phase: 'M4' },
   { name: 'chat', title: '会话助手', phase: 'M5' }

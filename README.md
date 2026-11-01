@@ -2,7 +2,7 @@
 
 把散落在 Excel 日报、群聊截图和口头交办里的事，变成有唯一主责、有期限、有过程记录、有验收结果的工单流，并让每张工单都能回答"还差什么"。
 
-- 技术栈：Spring Boot 3.x · AgentScope(Java) · Maven 多模块 · MySQL 8 · Vue3 + ECharts
+- 技术栈：Spring Boot 3.x · AgentScope(Java) · Maven 多模块 · MySQL 8 · Vue3 + 自研 SVG 图表组件（12 类图表不依赖图表库）
 - 检索底座：RAGFlow（解析、切片、向量、混合检索与重排）；本轮不引入 Dify
 - 三类用户：管理者（看全局与收敛）、负责人（派工与验收）、执行者（接单与打卡）
 - 视觉基准：`Memory-Observatory/memory-observatory`（浅色单色系、高信息密度、语义色克制）
@@ -12,7 +12,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v0.8：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、33 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 设计文档 v0.9：文档分类与已确认决策（Q1–Q15 全部落定） → 样本实测结构与设计约束 → 系统架构与选型理由 → 模块设计（含 4.10 完成地图） → 接口契约与错误码 → ER、33 张表结构与逐字段说明、索引与一致性 → 运行与失败处理 → 非功能设计 → 前端视觉、页面一览、通用交互规则、十个关键流程、断点检查表 → M0–M5 与验收 → 确认项收口；M1、M2 的验收记录在 11 章 |
 | [docs/LLM-CONFIG.md](docs/LLM-CONFIG.md) | 火山引擎 Ark 接入：三套凭据的区别、配置项、示例 yml、与 AgentScope 接线、在 RAGFlow 里配置 Ark、连通性自检、轮换与配额 |
 | [docs/ADR-001-RAG与Agent选型.md](docs/ADR-001-RAG与Agent选型.md) | 已接受的选型 v1.0：RAGFlow 作检索底座、AgentScope 串流程、不引 Dify、单库加标签分区；含本地源码实证、适配器分层、六条代价、回退路径与判定阈值、五步验证 |
 | [config/application-ai.yml](config/application-ai.yml) | 模型与 RAGFlow 配置示例，密钥从环境变量注入 |
@@ -65,7 +65,7 @@
 docker compose up -d
 docker compose ps            # 等 STATUS 显示 healthy，首次拉镜像约一分钟
 
-# 2 构建后端（Flyway 在应用启动时自动跑 V1–V4 迁移）
+# 2 构建后端（Flyway 在应用启动时自动跑 V1–V6 迁移）
 export JAVA_HOME=/Users/zxc/Library/Java/JavaVirtualMachines/jdk-21.0.13+9/Contents/Home
 mvn -DskipTests package
 java -jar tl-api/target/tracelink.jar
@@ -97,11 +97,25 @@ mysql -uroot -e "ALTER USER 'root'@'localhost' IDENTIFIED BY 'tracelink'; \
   CREATE DATABASE tracelink CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 ```
 
-## 下一步
+## 里程碑进度
 
-M0 骨架与 M1 工单与追踪已可运行。M0 有登录、部门、职位、人员四个模块的增删改查；M1 有工单建单与派工、八条规则（R1–R8）、追踪记录与时间线、验收与退回、改期与催办、逾期池与阻碍看板、问题项与措施项关闭、审计留痕，接口前缀 `/api/v1/tasks`，页面为「工单中心」与工单详情。
+M0 骨架、M1 工单与追踪、M2 导入导出与统计均已可运行。
+
+**M0** 有登录、部门、职位、人员四个模块的增删改查。
+
+**M1** 有工单建单与派工、八条规则（R1–R8）、追踪记录与时间线、验收与退回、改期与催办、逾期池与阻碍看板、问题项与措施项关闭、审计留痕，接口前缀 `/api/v1/tasks`，页面为「工单中心」与工单详情。
 
 M1 的本机自检走法：用 `admin` 建一张生产部工单（负责人张厚生、主责许伟），换 `xuwei` 登录写进展与结果、提交验收，再用 `admin` 退回一次、`xuwei` 再提交、`admin` 通过；随后可看逾期池、阻碍看板与详情时间线。错误路径也已覆盖：跨部门读取返回 `TL-4032`、同部门同标题重复建单返回 `TL-4093`、进度回退 `TL-4222`、退回未填理由 `TL-4224`。
 
-接下来按 `docs/DESIGN.md` 第 10 章推进 M2 导入导出与统计图表，M3 完成地图（Q13 的九条条件与权重、Q14 的两级缺口提醒），M4 接 RAGFlow 与火山引擎 Ark（按 `docs/LLM-CONFIG.md` 第 7 节跑通两段 curl），M5 会话与评价建议。
+**M2** 有三条链路，页面分别是「导入导出」与「统计看板」。
+
+| 链路 | 接口 | 说明 |
+|---|---|---|
+| 导入 | `POST /api/v1/imports`、`GET /{id}/preview`、`PUT /{id}/rows/{rowId}`、`POST /{id}/confirm`、`POST /{id}/revoke` | 上传后惰性解析，预览返回双识别率与逐行动作（CREATE/MERGE/SKIP），行可在弹窗里改标题、主责、期限与结果/问题文本，确认后逐行事务入库 |
+| 导出 | `POST /api/v1/exports`、`GET /{id}/download` | 五个模板：DAILY 日报回填（区间逐日一页、版式复刻源文件）、WEEKLY 周报、LEDGER 工单台账、PERF 绩效数据、CHART 统计图表 |
+| 统计 | `GET /api/v1/stats/overview`、`/trend`、`/process`、`/person` | 七个 KPI、趋势、状态分布、部门完成率、逾期分布与前十、复发榜、类型前十、部门周热力、计划与完成对比、人员散点/雷达/漏斗，共 12 类图表，前端用自研 SVG 组件渲染 |
+
+幂等分两层：同一文件重复上传按 `import_batch.file_hash` 直接返回原批次；行按「业务日期 + 工作内容 + 主责人」的指纹跳过，不含页名与行号，所以导出的日报换个版式再导入不会重复建单。真实样本（83 MB、10 页）的实测结果：首次导入明细行 61 行、行识别率 95.1%、人名匹配率 100%（门槛 95% 与 92%），建单 57 张、失败 0 行；把导出的七天日报回导，预览 `CREATE 0 / MERGE 0 / SKIP 57`，确认后新增 0 张、工单总数不变。
+
+接下来按 `docs/DESIGN.md` 第 10 章推进 M3 完成地图（Q13 的九条条件与权重、Q14 的两级缺口提醒），M4 接 RAGFlow 与火山引擎 Ark（按 `docs/LLM-CONFIG.md` 第 7 节跑通两段 curl），M5 会话与评价建议。
 

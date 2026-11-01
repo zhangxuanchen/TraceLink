@@ -26,4 +26,18 @@ public interface TaskRepository {
     List<Task> findOpenByDept(Long deptId);
 
     List<Task> findDoneSince(Long deptId, LocalDateTime since);
+
+    /** 统计用：按创建时间取范围（含部门过滤，null 表示全部） */
+    List<Task> findCreatedBetween(LocalDateTime from, LocalDateTime to, Long deptId);
+
+    /** 统计用：按实际完成时间取范围 */
+    List<Task> findDoneBetween(LocalDateTime from, LocalDateTime to, Long deptId);
+
+    /** 统计与台账用：计划完成时间落在区间内的工单（补上「补录的历史工单创建时间不在区间」的口径缺口） */
+    List<Task> findPlannedBetween(LocalDateTime from, LocalDateTime to, Long deptId);
+
+    List<Task> findByIds(List<Long> ids);
+
+    /** 导入去重：取某部门自某时刻起的全部未删除工单用于标题比对 */
+    List<Task> findForDedup(Long deptId, LocalDateTime since);
 }

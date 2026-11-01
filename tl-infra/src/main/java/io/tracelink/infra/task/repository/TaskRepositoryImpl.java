@@ -138,6 +138,69 @@ public class TaskRepositoryImpl implements TaskRepository {
                 .stream().map(TaskRepositoryImpl::toModel).toList();
     }
 
+    @Override
+    public List<Task> findCreatedBetween(LocalDateTime from, LocalDateTime to, Long deptId) {
+        QueryWrapper<TaskEntity> wrapper = new QueryWrapper<TaskEntity>()
+                .eq("deleted", 0)
+                .ge("created_at", from)
+                .lt("created_at", to);
+        if (deptId != null) {
+            wrapper.eq("dept_id", deptId);
+        }
+        wrapper.orderByAsc("created_at");
+        return taskMapper.selectList(wrapper).stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
+    @Override
+    public List<Task> findPlannedBetween(LocalDateTime from, LocalDateTime to, Long deptId) {
+        QueryWrapper<TaskEntity> wrapper = new QueryWrapper<TaskEntity>()
+                .eq("deleted", 0)
+                .ge("plan_end", from)
+                .lt("plan_end", to);
+        if (deptId != null) {
+            wrapper.eq("dept_id", deptId);
+        }
+        wrapper.orderByAsc("plan_end");
+        return taskMapper.selectList(wrapper).stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
+    @Override
+    public List<Task> findDoneBetween(LocalDateTime from, LocalDateTime to, Long deptId) {
+        QueryWrapper<TaskEntity> wrapper = new QueryWrapper<TaskEntity>()
+                .eq("deleted", 0)
+                .eq("status", TaskStatus.DONE.name())
+                .ge("actual_end", from)
+                .lt("actual_end", to);
+        if (deptId != null) {
+            wrapper.eq("dept_id", deptId);
+        }
+        wrapper.orderByAsc("actual_end");
+        return taskMapper.selectList(wrapper).stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
+    @Override
+    public List<Task> findByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return taskMapper.selectList(new QueryWrapper<TaskEntity>()
+                        .eq("deleted", 0)
+                        .in("id", ids))
+                .stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
+    @Override
+    public List<Task> findForDedup(Long deptId, LocalDateTime since) {
+        QueryWrapper<TaskEntity> wrapper = new QueryWrapper<TaskEntity>()
+                .eq("deleted", 0)
+                .ge("created_at", since);
+        if (deptId != null) {
+            wrapper.eq("dept_id", deptId);
+        }
+        wrapper.last("LIMIT 5000");
+        return taskMapper.selectList(wrapper).stream().map(TaskRepositoryImpl::toModel).toList();
+    }
+
     private QueryWrapper<TaskEntity> buildWrapper(TaskQuery query) {
         QueryWrapper<TaskEntity> wrapper = new QueryWrapper<TaskEntity>().eq("deleted", 0);
         if (query.keyword() != null && !query.keyword().isBlank()) {

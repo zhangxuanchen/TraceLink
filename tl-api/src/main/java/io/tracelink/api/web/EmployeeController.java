@@ -43,6 +43,12 @@ public class EmployeeController {
         return ApiResult.ok(employeeAppService.options());
     }
 
+    /** ORG-3：姓名解析，供导入预览与智能会话把自由文本里的人名落成员工 */
+    @GetMapping("/resolve")
+    public ApiResult<List<EmployeeView>> resolve(@RequestParam String name) {
+        return ApiResult.ok(employeeAppService.resolve(name));
+    }
+
     @GetMapping("/{id}")
     public ApiResult<EmployeeView> detail(@PathVariable Long id) {
         return ApiResult.ok(employeeAppService.detail(id));
