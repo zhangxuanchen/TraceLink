@@ -47,7 +47,7 @@
 
         <div class="card chart-card">
           <div class="chart-head"><h3>状态分布</h3></div>
-          <DonutChart :items="overview.status" />
+          <DonutChart :items="statusItems" />
         </div>
 
         <div class="card chart-card">
@@ -57,7 +57,7 @@
 
         <div class="card chart-card">
           <div class="chart-head"><h3>逾期时长分布</h3></div>
-          <BarChart vertical :items="overview.overdueBins" />
+          <BarChart vertical :items="overdueBinItems" />
         </div>
 
         <div class="card chart-card">
@@ -78,17 +78,17 @@
 
         <div class="card chart-card">
           <div class="chart-head"><h3>复发事项榜</h3></div>
-          <BarChart horizontal :items="overview.recurrent" :limit="8" :palette="['var(--bad)']" />
+          <BarChart horizontal :items="recurrentItems" :limit="8" :palette="['var(--bad)']" />
         </div>
 
         <div class="card chart-card">
           <div class="chart-head"><h3>问题类型前十</h3></div>
-          <BarChart horizontal :items="overview.types" :limit="10" :palette="['var(--accent)']" />
+          <BarChart horizontal :items="typeItems" :limit="10" :palette="['var(--accent)']" />
         </div>
 
         <div class="card chart-card wide">
           <div class="chart-head"><h3>部门周热力</h3><span class="muted">颜色越深，逾期越密</span></div>
-          <HeatmapChart :cells="overview.heatmap" />
+          <HeatmapChart :cells="heatCells" />
         </div>
       </div>
 
@@ -123,7 +123,7 @@
 
         <div class="card chart-card">
           <div class="chart-head"><h3>完成漏斗</h3><span class="muted">卡在哪一步流失</span></div>
-          <FunnelChart v-if="person" :steps="person.funnel" />
+          <FunnelChart v-if="person" :steps="funnelSteps" />
         </div>
       </div>
 
@@ -212,6 +212,17 @@ const scatterPoints = computed(() =>
     rate: p.onTimeRate,
     label: p.name
   }))
+)
+
+// 后端切片与漏斗用 count，图表组件统一读 value，这里转一次，免得每个组件各写一套字段兼容
+const toItems = (list) => (list || []).map((s) => ({ label: s.label, value: s.count }))
+const statusItems = computed(() => toItems(overview.value?.status))
+const overdueBinItems = computed(() => toItems(overview.value?.overdueBins))
+const recurrentItems = computed(() => toItems(overview.value?.recurrent))
+const typeItems = computed(() => toItems(overview.value?.types))
+const funnelSteps = computed(() => toItems(person.value?.funnel))
+const heatCells = computed(() =>
+  (overview.value?.heatmap || []).map((c) => ({ row: c.row, column: c.column, value: c.count }))
 )
 
 function formatKpi(kpi) {
