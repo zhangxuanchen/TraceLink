@@ -2,5 +2,7 @@
 # Tugline 拉取后自动读取，无需在控制台重复配置
 tugline:
   display-name: TraceLink 工单系统
-  health-path: /
+  health-path: /actuator/health
   preview-path: /index.html
+  # 应用启动前先拉起依赖的 MySQL（--wait 会等健康检查通过再返回）
+  pre-start: docker compose up -d --wait mysql
