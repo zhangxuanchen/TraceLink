@@ -9,16 +9,19 @@
         </div>
       </div>
       <nav class="nav">
-        <router-link v-for="item in visibleMenus" :key="item.name" :to="{ name: item.name }" class="nav-item"
-                     :class="{ 'nav-item-off': item.phase }">
-          <span class="nav-text">{{ item.title }}</span>
-          <span v-if="item.phase" class="nav-phase">{{ item.phase }}</span>
-        </router-link>
+        <template v-for="group in visibleGroups" :key="group.label">
+          <div v-if="group.label" class="nav-group">{{ group.label }}</div>
+          <router-link v-for="item in group.items" :key="item.name" :to="{ name: item.name }" class="nav-item"
+                       :class="{ 'nav-item-off': item.phase }">
+            <span class="nav-text">{{ item.title }}</span>
+            <span v-if="item.phase" class="nav-phase">{{ item.phase }}</span>
+          </router-link>
+        </template>
       </nav>
     </aside>
     <div class="main">
       <header class="top">
-        <div class="crumb">{{ route.meta.title || '工作台' }}</div>
+        <div class="crumb">{{ route.meta.title || '工单中心' }}</div>
         <div class="who">
           <span class="role">{{ roleLabel }}</span>
           <span class="name">{{ user.name || user.username }}</span>
@@ -40,17 +43,31 @@ import { TOKEN_KEY, USER_KEY } from '../api/http.js'
 const route = useRoute()
 const router = useRouter()
 
-const menus = [
-  { name: 'depts', title: '部门管理' },
-  { name: 'positions', title: '职位管理' },
-  { name: 'employees', title: '人员管理' },
-  { name: 'tasks', title: '工单中心' },
-  { name: 'stats', title: '统计看板' },
-  { name: 'review', title: '复盘与建议', roles: ['SYS_ADMIN', 'MANAGER', 'OWNER'] },
-  { name: 'import', title: '导入导出' },
-  { name: 'map', title: '完成地图' },
-  { name: 'kb', title: '知识库' },
-  { name: 'chat', title: '会话助手' }
+/** 侧栏按 DESIGN 9.2 的页面地图分三组；roles 控制可见性，执行者看不到设置 */
+const menuGroups = [
+  {
+    label: '工单',
+    items: [
+      { name: 'tasks', title: '工单中心' },
+      { name: 'chat', title: '工单助手' },
+      { name: 'stats', title: '统计看板' },
+      { name: 'kb', title: '知识库' }
+    ]
+  },
+  {
+    label: '组织',
+    items: [
+      { name: 'depts', title: '部门管理' },
+      { name: 'positions', title: '职位管理' },
+      { name: 'employees', title: '人员管理' }
+    ]
+  },
+  {
+    label: '系统设置',
+    items: [
+      { name: 'model', title: '模型配置', roles: ['SYS_ADMIN', 'MANAGER'] }
+    ]
+  }
 ]
 
 const user = computed(() => {
@@ -62,11 +79,15 @@ const user = computed(() => {
 })
 
 /** 评价只对管理者开放；负责人只能看建议队列，执行者不出现复盘入口 */
-const visibleMenus = computed(() => menus.filter((item) => {
-  if (!item.roles) return true
+const visibleGroups = computed(() => {
   const roles = user.value.roles || []
-  return item.roles.some((role) => roles.includes(role))
-}))
+  return menuGroups
+    .map((group) => ({
+      label: group.label,
+      items: group.items.filter((item) => !item.roles || item.roles.some((role) => roles.includes(role)))
+    }))
+    .filter((group) => group.items.length)
+})
 
 const roleLabel = computed(() => {
   const map = { SYS_ADMIN: '系统管理员', MANAGER: '管理者', OWNER: '负责人', EXECUTOR: '执行者' }
@@ -134,6 +155,14 @@ function logout() {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+}
+
+.nav-group {
+  padding: 10px 10px 4px;
+  color: var(--txt-3);
+  font-size: 11px;
+  letter-spacing: 0.5px;
 }
 
 .nav-item {
@@ -240,6 +269,10 @@ function logout() {
     flex-direction: row;
     overflow-x: auto;
     padding: 8px;
+  }
+
+  .nav-group {
+    display: none;
   }
 
   .nav-item {

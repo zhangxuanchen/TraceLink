@@ -371,17 +371,26 @@ function priorityLabel(value) {
 
 async function load() {
   error.value = ''
+  const id = route.params.id
+  if (!id) {
+    // 深链缺参数时不要带着 undefined 打接口
+    loadingTimeline.value = false
+    error.value = '工单编号缺失，请从工单中心列表、看板或「我的」视图点进详情'
+    return
+  }
   try {
     const [detailData, timelineData] = await Promise.all([
-      taskApi.detail(route.params.id),
-      taskApi.timeline(route.params.id)
+      taskApi.detail(id),
+      taskApi.timeline(id)
     ])
+    // 请求期间用户可能已切到别的工单或别的页面，过期结果直接丢弃
+    if (route.params.id !== id) return
     detail.value = detailData
     timeline.value = timelineData || []
     if (!employees.value.length) {
       employees.value = await employeeApi.options()
     }
-    await loadGates()
+    await loadGates(id)
   } catch (e) {
     error.value = e.message
   } finally {
@@ -389,9 +398,14 @@ async function load() {
   }
 }
 
-async function loadGates() {
+/** 用调用时固定的工单号取条件状态，避免切换页面后这里读到空的 route.params */
+async function loadGates(id = route.params.id) {
+  if (!id) {
+    gateMap.value = null
+    return
+  }
   try {
-    gateMap.value = await gateApi.map(route.params.id)
+    gateMap.value = await gateApi.map(id)
   } catch (e) {
     gateMap.value = null
   }
@@ -428,7 +442,7 @@ function scrollTo(id) {
 }
 
 function openMatter() {
-  router.push({ name: 'map', query: { taskId: String(route.params.id) } })
+  router.push({ name: 'insights', query: { tab: 'map', taskId: String(route.params.id) } })
 }
 
 function openModal(mode, form, checks = []) {

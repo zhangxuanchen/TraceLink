@@ -63,6 +63,11 @@ public class ChatController {
         return ApiResult.ok(chatAppService.archive(AuthContext.current(), id));
     }
 
+    @PostMapping("/sessions/{id}/clear")
+    public ApiResult<ChatSessionView> clear(@PathVariable Long id) {
+        return ApiResult.ok(chatAppService.clearContext(AuthContext.current(), id));
+    }
+
     @GetMapping("/sessions/{id}/messages")
     public ApiResult<List<ChatMessageView>> messages(@PathVariable Long id,
                                                      @RequestParam(defaultValue = "100") int limit) {
@@ -121,6 +126,11 @@ public class ChatController {
         @Override
         public void hint(ChatHint hint) {
             send("hint", hint);
+        }
+
+        @Override
+        public void clarify(List<String> questions) {
+            send("clarify", Map.of("questions", questions == null ? List.of() : questions));
         }
 
         @Override

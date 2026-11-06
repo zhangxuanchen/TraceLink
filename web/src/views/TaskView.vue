@@ -1,31 +1,23 @@
 <template>
   <section>
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">工单中心</h2>
-        <p class="page-sub">一句话一件事一张单；期限、主责与验收条件在建单时就要定清楚</p>
-      </div>
-      <button class="btn btn-primary" @click="openCreate">新建工单</button>
-    </div>
-
     <div class="counts">
-      <button class="count-chip" :class="{ active: filters.status === 'PENDING' }" @click="focusStatus('PENDING')">
+      <button class="count-chip" :class="{ active: isOnlyStatus('PENDING') }" @click="focusStatus('PENDING')">
         <span class="count-label">待接单</span>
         <span class="count-value num">{{ counts.pending }}</span>
       </button>
-      <button class="count-chip" :class="{ active: filters.status === 'IN_PROGRESS' }" @click="focusStatus('IN_PROGRESS')">
+      <button class="count-chip" :class="{ active: isOnlyStatus('IN_PROGRESS') }" @click="focusStatus('IN_PROGRESS')">
         <span class="count-label">进行中</span>
         <span class="count-value num">{{ counts.inProgress }}</span>
       </button>
-      <button class="count-chip" :class="{ active: filters.status === 'BLOCKED' }" @click="focusStatus('BLOCKED')">
+      <button class="count-chip" :class="{ active: isOnlyStatus('BLOCKED') }" @click="focusStatus('BLOCKED')">
         <span class="count-label">受阻</span>
         <span class="count-value num">{{ counts.blocked }}</span>
       </button>
-      <button class="count-chip" :class="{ active: filters.status === 'SUBMITTED' }" @click="focusStatus('SUBMITTED')">
+      <button class="count-chip" :class="{ active: isOnlyStatus('SUBMITTED') }" @click="focusStatus('SUBMITTED')">
         <span class="count-label">待验收</span>
         <span class="count-value num">{{ counts.submitted }}</span>
       </button>
-      <button class="count-chip" :class="{ active: filters.status === 'DONE' }" @click="focusStatus('DONE')">
+      <button class="count-chip" :class="{ active: isOnlyStatus('DONE') }" @click="focusStatus('DONE')">
         <span class="count-label">已验收</span>
         <span class="count-value num">{{ counts.done }}</span>
       </button>
@@ -40,26 +32,24 @@
     </div>
 
     <div class="toolbar">
-      <input v-model="filters.keyword" placeholder="工单号或标题" style="width: 200px" @keyup.enter="search" />
-      <select v-model="filters.status" @change="search">
-        <option :value="null">全部状态</option>
-        <option v-for="s in TASK_STATUSES" :key="s.value" :value="s.value">{{ s.label }}</option>
-      </select>
-      <select v-model="filters.type" @change="search">
-        <option :value="null">全部类型</option>
-        <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
-      </select>
-      <select v-model="filters.deptId" @change="search">
-        <option :value="null">全部部门</option>
-        <option v-for="d in deptOptions" :key="d.id" :value="d.id">
-          {{ '　'.repeat(d.level - 1) + d.name }}
-        </option>
-      </select>
-      <label class="check"><input v-model="filters.overdue" type="checkbox" @change="search" /> 只看逾期</label>
-      <label class="check"><input v-model="filters.blocked" type="checkbox" @change="search" /> 只看受阻</label>
+      <input v-model="filters.keyword" placeholder="工单号或标题" style="width: 180px" @keyup.enter="search" />
+      <MultiSelect v-model="filters.status" :options="statusOptions" placeholder="全部状态" @change="search" />
+      <MultiSelect v-model="filters.type" :options="typeOptions" placeholder="全部类型" @change="search" />
+      <MultiSelect v-model="filters.deptId" :options="deptSelectOptions" placeholder="全部部门" @change="search" />
       <button class="btn" @click="search">查询</button>
       <button class="btn" @click="reset">重置</button>
       <span class="count">共 {{ page.total }} 张</span>
+
+      <!-- 导出并进筛选条：模板、区间、开始导出，右侧紧挨「新建工单」 -->
+      <ExportPanel v-if="canPrivileged" compact class="toolbar-export"
+                   :codes="['LEDGER', 'DAILY']" :filters="exportFilters">
+        <template #after-export>
+          <button class="btn btn-primary" @click="openCreate">新建工单</button>
+        </template>
+      </ExportPanel>
+      <div v-else class="create-row">
+        <button class="btn btn-primary" @click="openCreate">新建工单</button>
+      </div>
     </div>
 
     <div v-if="error" class="form-error">{{ error }}</div>
@@ -207,9 +197,12 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import BaseModal from '../components/BaseModal.vue'
+import ExportPanel from '../components/ExportPanel.vue'
+import MultiSelect from '../components/MultiSelect.vue'
 import { deptApi, employeeApi } from '../api/org.js'
+import { USER_KEY } from '../api/http.js'
 import { taskApi } from '../api/task.js'
 import {
   PRIORITIES,
@@ -221,6 +214,7 @@ import {
   toApiDateTime
 } from '../api/taskOptions.js'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(true)
 const error = ref('')
@@ -230,11 +224,45 @@ const counts = ref({ pending: 0, inProgress: 0, blocked: 0, submitted: 0, done: 
 const page = ref({ total: 0, pageNo: 1, pageSize: 20, records: [] })
 
 const filters = reactive({
-  keyword: '', status: null, type: null, deptId: null, overdue: false, blocked: false, mine: false
+  keyword: '', status: [], type: [], deptId: [], overdue: false, mine: false
 })
 const dialog = reactive({ open: false, saving: false, error: '', form: emptyForm() })
 
+/** 看板视图与导出台账对同一批角色开放（DESIGN 9.2 的按角色可见范围） */
+const canPrivileged = computed(() => {
+  let roles = []
+  try {
+    roles = JSON.parse(localStorage.getItem(USER_KEY) || '{}').roles || []
+  } catch {
+    roles = []
+  }
+  return roles.some((role) => ['SYS_ADMIN', 'MANAGER', 'OWNER'].includes(role))
+})
+
+/** 多选值统一拼成逗号串交给接口：状态 / 类型 / 部门都支持一次选多个 */
+function csv(list) {
+  return list.length ? list.join(',') : undefined
+}
+
+const statusOptions = TASK_STATUSES.map((item) => ({ value: item.value, label: item.label }))
+const typeOptions = TASK_TYPES.map((item) => ({ value: item.value, label: item.label }))
+
+/** 导出的综合筛选：列表页筛选条那套条件原样带进导出控件，台账模板按它缩行 */
+const exportFilters = computed(() => ({
+  keyword: filters.keyword.trim(),
+  status: csv(filters.status),
+  type: csv(filters.type),
+  deptIds: filters.deptId.length ? [...filters.deptId] : undefined,
+  overdueOnly: filters.overdue,
+  mine: filters.mine
+}))
+
 const deptOptions = computed(() => flatten(depts.value))
+
+const deptSelectOptions = computed(() => deptOptions.value.map((dept) => ({
+  value: dept.id,
+  label: '　'.repeat(dept.level - 1) + dept.name
+})))
 
 function emptyForm() {
   return {
@@ -263,11 +291,10 @@ async function load() {
     const [pageData, countData] = await Promise.all([
       taskApi.page({
         keyword: filters.keyword || undefined,
-        status: filters.status || undefined,
-        type: filters.type || undefined,
-        deptId: filters.deptId || undefined,
+        status: csv(filters.status),
+        type: csv(filters.type),
+        deptId: csv(filters.deptId),
         overdue: filters.overdue || undefined,
-        blocked: filters.blocked || undefined,
         mine: filters.mine || undefined,
         pageNo: page.value.pageNo,
         pageSize: page.value.pageSize
@@ -290,37 +317,38 @@ function search() {
 
 function reset() {
   filters.keyword = ''
-  filters.status = null
-  filters.type = null
-  filters.deptId = null
+  filters.status = []
+  filters.type = []
+  filters.deptId = []
   filters.overdue = false
-  filters.blocked = false
   filters.mine = false
   search()
 }
 
+/** 角标是快捷筛选：点一次只看这一个状态，再点一次取消 */
+function isOnlyStatus(status) {
+  return filters.status.length === 1 && filters.status[0] === status
+}
+
 function focusStatus(status) {
-  const same = filters.status === status && !filters.overdue && !filters.mine
-  filters.status = same ? null : status
+  const same = isOnlyStatus(status) && !filters.overdue && !filters.mine
+  filters.status = same ? [] : [status]
   filters.overdue = false
-  filters.blocked = false
   filters.mine = false
   search()
 }
 
 function focusOverdue() {
   filters.overdue = !filters.overdue
-  filters.status = null
-  filters.blocked = false
+  filters.status = []
   filters.mine = false
   search()
 }
 
 function focusMine() {
   filters.mine = !filters.mine
-  filters.status = null
+  filters.status = []
   filters.overdue = false
-  filters.blocked = false
   search()
 }
 
@@ -393,10 +421,29 @@ async function save() {
   }
 }
 
-onMounted(load)
+/** 筛选条件用 query 带过来，刷新与分享都能还原 */
+onMounted(() => {
+  const { status, overdue, deptId } = route.query
+  if (typeof status === 'string' && status) filters.status = status.split(',').filter(Boolean)
+  if (typeof deptId === 'string' && deptId) filters.deptId = deptId.split(',').map(Number).filter(Boolean)
+  if (overdue === '1' || overdue === 'true') filters.overdue = true
+  load()
+})
 </script>
 
 <style scoped>
+/* 导出控件并进筛选条，靠右对齐；换行时也贴着右边 */
+.toolbar-export,
+.create-row {
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.create-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .counts {
   display: flex;
   flex-wrap: wrap;
@@ -438,15 +485,6 @@ onMounted(load)
 .count-value {
   font-size: 16px;
   font-weight: 600;
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--txt-2);
-  font-size: 13px;
-  white-space: nowrap;
 }
 
 .count {

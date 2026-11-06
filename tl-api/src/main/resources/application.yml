@@ -61,7 +61,7 @@ tracelink:
       chat:
         model: ${ARK_CHAT_MODEL:}
         temperature: 0.2
-        max-tokens: 2048
+        max-tokens: 4096
         timeout-seconds: 30
     ragflow:
       enabled: ${RAGFLOW_ENABLED:false}

@@ -67,6 +67,17 @@ textarea {
   padding: 8px 10px;
 }
 
+/* 原生下拉箭头离文字太远（浏览器自己预留的空隙），换成自绘的小箭头贴住右侧内边距 */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239AA0A6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  cursor: pointer;
+}
+
 input:focus,
 select:focus,
 textarea:focus {

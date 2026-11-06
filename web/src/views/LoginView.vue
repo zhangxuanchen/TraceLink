@@ -54,7 +54,7 @@ async function submit() {
     const result = await authApi.login(form.username.trim(), form.password)
     localStorage.setItem(TOKEN_KEY, result.token)
     localStorage.setItem(USER_KEY, JSON.stringify(result))
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/depts'
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     router.replace(redirect)
   } catch (e) {
     error.value = e.message

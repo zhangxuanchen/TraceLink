@@ -98,6 +98,21 @@ public class ChatAppService {
         return toView(session);
     }
 
+    /** 清理上下文：清空历史消息，把会话的 msgCount 归零、title 重置为"新会话"，会话本身保留 */
+    @Transactional
+    public ChatSessionView clearContext(AuthUser actor, Long sessionId) {
+        ChatSession session = requireOwned(actor, sessionId);
+        if (session.status == ChatSessionStatus.ARCHIVED) {
+            throw new BizException(ErrorCode.STATE_NOT_ALLOWED, "会话已归档，不能再清理上下文");
+        }
+        messageRepository.deleteBySession(sessionId);
+        sessionRepository.updateActivity(sessionId, "新会话", 0, LocalDateTime.now());
+        session.msgCount = 0;
+        session.title = "新会话";
+        session.lastMsgAt = LocalDateTime.now();
+        return toView(session);
+    }
+
     /** 归属校验：提问与归档都只允许本人 */
     public ChatSession requireOwned(AuthUser actor, Long sessionId) {
         ChatSession session = sessionRepository.findById(sessionId);

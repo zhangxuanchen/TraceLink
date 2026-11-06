@@ -11,7 +11,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "io.tracelink.infra.importing.mapper", "io.tracelink.infra.report.mapper",
         "io.tracelink.infra.exporting.mapper", "io.tracelink.infra.stat.mapper",
         "io.tracelink.infra.gate.mapper", "io.tracelink.infra.kb.mapper",
-        "io.tracelink.infra.chat.mapper", "io.tracelink.infra.eval.mapper", "io.tracelink.infra.ai.mapper"})
+        "io.tracelink.infra.chat.mapper", "io.tracelink.infra.eval.mapper", "io.tracelink.infra.ai.mapper",
+        "io.tracelink.infra.job.mapper", "io.tracelink.infra.admin.mapper"})
 public class TraceLinkApplication {
 
     public static void main(String[] args) {

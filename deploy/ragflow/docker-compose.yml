@@ -12,6 +12,8 @@ services:
         condition: service_healthy
     image: ${RAGFLOW_IMAGE}
     container_name: ragflow-server
+    # 官方只发布 linux/amd64 镜像，Apple Silicon 上明确走模拟，避免每次拉起都报警告
+    platform: linux/amd64
     ports:
       - ${SVR_HTTP_PORT}:9380
       - ${WEB_PORT}:80

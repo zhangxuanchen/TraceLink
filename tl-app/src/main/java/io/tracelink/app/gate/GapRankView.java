@@ -9,12 +9,16 @@ public record GapRankView(
         int totalTodo,
         List<ByGate> byGate,
         List<ByHolder> byHolder,
+        List<ByDept> byDept,
         List<TopTask> top) {
 
     public record ByGate(String code, String name, int todoCount, int maxGapDays) {
     }
 
     public record ByHolder(Long holderId, String holderName, int todoCount, int maxGapDays) {
+    }
+
+    public record ByDept(Long deptId, String deptName, int todoCount, int totalCount, int maxGapDays) {
     }
 
     public record TopTask(Long taskId, String taskNo, String title, String gateCode, String gateName,

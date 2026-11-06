@@ -50,7 +50,7 @@ public class TaskController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String type,
-            @RequestParam(required = false) Long deptId,
+            @RequestParam(required = false) String deptId,
             @RequestParam(required = false) Long ownerId,
             @RequestParam(required = false) Long primaryAssigneeId,
             @RequestParam(defaultValue = "false") boolean mine,

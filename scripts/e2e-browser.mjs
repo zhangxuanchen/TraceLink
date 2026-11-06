@@ -1,4 +1,4 @@
-// 浏览器端到端验收：完成地图四视图 + 工单详情九条件卡片 + 知识库检索问答 + 执行者视角。
+// 浏览器端到端验收：完成地图四视图 + 工单详情九条件卡片 + 知识库文档库 + 执行者视角。
 // 前置：后端 8090 与前端 dev server 5180 已启动（web 目录 npm run dev），数据库有种子数据。
 // 运行：node scripts/e2e-browser.mjs
 //   依赖 playwright-core 与 Chromium 缓存，按需用环境变量指定：
@@ -59,7 +59,7 @@ async function login(username, password) {
 }
 
 async function goMap() {
-  await page.goto(`${BASE}/#/map`)
+  await page.goto(`${BASE}/#/insights`)
   await page.waitForSelector('.tabs .tab', { timeout: 15000 })
 }
 
@@ -68,7 +68,8 @@ try {
   await login('admin', 'admin123')
   check('admin 登录后进入应用外壳', await page.locator('.shell').count() === 1)
   const navTitles = await page.locator('.nav-text').allInnerTexts()
-  check('侧栏出现完成地图入口', navTitles.includes('完成地图'), navTitles.join('/'))
+  check('侧栏不再出现重点发现入口', !navTitles.includes('重点发现'), navTitles.join('/'))
+  check('完成地图与复盘建议不再单列', !navTitles.includes('完成地图') && !navTitles.includes('复盘与建议'), navTitles.join('/'))
   const phaseCount = await page.locator('.nav-phase').count()
   check('侧栏没有阶段占位', phaseCount === 0, `${phaseCount} 个占位`)
 
@@ -84,6 +85,13 @@ try {
   check('列顺序为 G1..G9', codes.join(',') === 'G1,G2,G3,G4,G5,G6,G7,G8,G9', codes.join(','))
   const rowCount = await page.locator('table.matrix tbody tr').count()
   check('矩阵有在办工单行', rowCount > 0, `${rowCount} 行`)
+  const cellText = await page.locator('table.matrix tbody td.gate-cell').evaluateAll((cells) => ({
+    todo: cells.filter((c) => c.classList.contains('cell-todo') && c.textContent.trim()).length,
+    normal: cells.filter((c) => (c.classList.contains('cell-done') || c.classList.contains('cell-na'))
+      && c.textContent.trim()).length
+  }))
+  check('矩阵只标未达成条件，达成与不适用留空', cellText.todo > 0 && cellText.normal === 0,
+    `缺口 ${cellText.todo} 格 / 正常 ${cellText.normal} 格`)
   const hint = await page.locator('.toolbar .muted').first().innerText().catch(() => '')
   check('工具栏显示快照时间与在办数', /快照.*在办 \d+ 张/.test(hint), hint)
   check('矩阵无陈旧提示条', await page.locator('.banner').count() === 0)
@@ -182,12 +190,12 @@ try {
   check('G3 去处理跳到问题项区', issueVisible)
   await page.screenshot({ path: `${SHOTS}/06-detail.png`, fullPage: true })
 
-  // 看事项链 → 跳到 map?taskId=
+  // 看事项链 → 跳到 insights?tab=map&taskId=
   const currentTaskId = page.url().split('/tasks/')[1] || ''
   await page.locator('.head-link', { hasText: '看事项链' }).first().click()
   await page.waitForSelector('.matter-head', { timeout: 15000 })
   const linked = page.url().includes(`taskId=${currentTaskId}`)
-  check('看事项链回跳到事项视图并带 taskId', linked && page.url().includes('/map'), page.url())
+  check('看事项链回跳到事项视图并带 taskId', linked && page.url().includes('/insights') && page.url().includes('tab=map'), page.url())
   await page.screenshot({ path: `${SHOTS}/07-detail-to-matter.png`, fullPage: true })
 
   // ---------------------------------------------------------------- 知识库（M4）
@@ -212,19 +220,28 @@ try {
 `, 'utf8')
 
   await page.goto(`${BASE}/#/kb`)
-  await page.waitForSelector('.layout .table', { timeout: 15000 })
-  check('知识库页面打开并有检索与文档库',
+  await page.waitForSelector('.card.block .table', { timeout: 15000 })
+  check('知识库为整宽文档库，无右侧说明栏',
     await page.locator('.page-title', { hasText: '知识库' }).count() === 1
-      && await page.locator('.ask-bar textarea').count() === 1
-      && await page.locator('.card.block', { hasText: '文档库' }).count() === 1)
-  check('管理员可见上传文档与沉淀历史措施',
-    await page.locator('.head-actions .btn', { hasText: '上传文档' }).count() === 1
-      && await page.locator('.head-actions .btn', { hasText: '沉淀历史措施' }).count() === 1)
+      && await page.locator('.card.block', { hasText: '文档库' }).count() === 1
+      && await page.locator('.side-col').count() === 0
+      && await page.locator('.ask-bar').count() === 0)
+  check('文档库筛选条有搜索按钮',
+    await page.locator('.toolbar .btn', { hasText: '搜索' }).count() === 1)
+  check('知识库页头不再保留刷新按钮', await page.locator('.page-head .btn').count() === 0)
+  const pagerText = await page.locator('.pager').count() ? await page.locator('.pager').innerText() : ''
+  check('文档库有分页并显示当前区间',
+    await page.locator('.pager').count() === 1 && /第 \d+–\d+ 条，共 \d+ 条/.test(pagerText), pagerText)
+  check('管理员文档库筛选条出现上传文档',
+    await page.locator('.toolbar .btn', { hasText: '上传文档' }).count() === 1)
+  check('页头不再保留上传与沉淀历史措施',
+    await page.locator('.head-actions .btn', { hasText: '上传文档' }).count() === 0
+      && await page.locator('.head-actions .btn', { hasText: '沉淀历史措施' }).count() === 0)
   const docTableCols = await page.locator('.table thead th').count()
   check('文档库表头包含状态与同步时间', docTableCols >= 7, `${docTableCols} 列`)
 
   // 上传弹窗：字段齐全、选了部门才出现可见范围
-  await page.locator('.head-actions .btn', { hasText: '上传文档' }).click()
+  await page.locator('.toolbar .btn', { hasText: '上传文档' }).click()
   await page.waitForSelector('.mask .panel', { timeout: 10000 })
   check('上传弹窗含文件、标题、知识域、部门',
     await page.locator('.mask input[type=file]').count() === 1
@@ -257,59 +274,6 @@ try {
     && (await kbRow.locator('td').nth(3).innerText()).includes('部门'), await kbRow.locator('td').nth(3).innerText())
   await page.screenshot({ path: `${SHOTS}/08-kb-doc.png`, fullPage: true })
 
-  // 检索：纯字母唯一标识命中本文档，点击命中项看切片原文
-  await page.fill('.ask-bar textarea', kbMark)
-  await page.locator('.ask-controls button.btn-primary').click()
-  await page.waitForSelector('.result .hit', { timeout: 15000 })
-  const searchHead = await page.locator('.result .result-head').innerText()
-  const searchTotal = Number((searchHead.match(/命中 (\d+) 条/) || [])[1] || 0)
-  check('检索命中文档切片', searchTotal > 0, searchHead.replace(/\n/g, ' '))
-  check('检索结果标注检索来源', /本地降级|RAGFlow/.test(searchHead), searchHead.split('\n')[0])
-  await page.locator('.result .hit').first().click()
-  await page.waitForSelector('.mask .chunk-body', { timeout: 15000 })
-  const chunkBody = await page.locator('.mask .chunk-body').innerText()
-  check('点命中项可回溯切片原文', chunkBody.includes(kbMark), `${chunkBody.length} 字`)
-  check('切片弹窗带文档编号', await page.locator('.mask .chunk-meta .tag', { hasText: '文档 #' }).count() >= 1)
-  await page.screenshot({ path: `${SHOTS}/09-kb-chunk.png`, fullPage: true })
-  await page.locator('.mask .panel-foot .btn', { hasText: '关闭' }).click()
-  await page.waitForSelector('.mask', { state: 'detached', timeout: 10000 })
-
-  // 智能问答：先给召回，再流式答案；未配密钥时应给出 TL-5031 可解释提示
-  await page.locator('.seg button', { hasText: '智能问答' }).click()
-  await page.fill('.ask-bar textarea', kbMark)
-  await page.locator('.ask-controls button.btn-primary').click()
-  await page.waitForSelector('.result .form-error, .result .answer', { timeout: 25000 })
-  const askHead = await page.locator('.result .result-head').innerText()
-  check('问答先返回召回条数', /召回 \d+ 条/.test(askHead), askHead.replace(/\n/g, ' '))
-  const askError = await page.locator('.result .form-error').count() ? await page.locator('.result .form-error').innerText() : ''
-  if (askError) {
-    check('未配模型密钥时问答返回 TL-5031 提示', askError.includes('TL-5031') && askError.includes('模型密钥未配置'),
-      askError.replace(/\n/g, ' ').slice(0, 90))
-  } else {
-    const answer = await page.locator('.result .answer').innerText()
-    const citations = await page.locator('.result .citation').count()
-    check('配置模型密钥时返回答案与可点引用', answer.length > 0 && citations > 0, `${answer.length} 字 / ${citations} 引用`)
-  }
-  check('问答结果附带召回切片', await page.locator('.result .hits.compact .hit').count() > 0,
-    `${await page.locator('.result .hits.compact .hit').count()} 条`)
-  await page.screenshot({ path: `${SHOTS}/10-kb-ask.png`, fullPage: true })
-
-  // 历史问题与措施沉淀
-  await page.locator('.head-actions .btn', { hasText: '沉淀历史措施' }).click()
-  await page.waitForSelector('.mask .panel', { timeout: 10000 })
-  check('沉淀弹窗含部门与扫描上限',
-    await page.locator('.mask .field', { hasText: '限定部门' }).count() === 1
-      && await page.locator('.mask .field', { hasText: '最多扫描' }).count() === 1)
-  await page.locator('.mask .panel-foot .btn', { hasText: '开始沉淀' }).click()
-  await page.waitForSelector('.mask .history-result', { timeout: 90000 })
-  const histTags = (await page.locator('.mask .history-result .tag').allInnerTexts()).map((t) => t.trim())
-  check('沉淀返回扫描/新建/跳过结果',
-    histTags.length === 3 && /扫描 \d+/.test(histTags[0]) && /新建 \d+/.test(histTags[1]) && /跳过 \d+/.test(histTags[2]),
-    histTags.join(' / '))
-  await page.screenshot({ path: `${SHOTS}/11-kb-history.png`, fullPage: true })
-  await page.locator('.mask .panel-foot .btn', { hasText: '关闭' }).click()
-  await page.waitForSelector('.mask', { state: 'detached', timeout: 10000 })
-
   // ---------------------------------------------------------------- 执行者视角
   await page.locator('.who .btn-link', { hasText: '退出' }).click()
   await page.waitForSelector('#username', { timeout: 10000 })
@@ -317,6 +281,7 @@ try {
   await goMap()
   const exTabs = await page.locator('.tabs .tab').allInnerTexts()
   check('执行者只看到事项视图与提醒', exTabs.length === 2 && exTabs.includes('我的提醒'), exTabs.join('/'))
+  check('执行者看不到复盘与建议视图', await page.locator('.insight-tab', { hasText: '复盘与建议' }).count() === 0)
   check('执行者看不到重算快照', await page.locator('.head-actions button', { hasText: '重算快照' }).count() === 0)
   await page.waitForSelector('.inbox li', { timeout: 15000 })
   check('执行者收件箱有记录', await page.locator('.inbox li').count() > 0)
@@ -324,18 +289,15 @@ try {
 
   // 执行者看知识库：无管理入口，其它部门私有文档零命中
   await page.goto(`${BASE}/#/kb`)
-  await page.waitForSelector('.layout .table', { timeout: 15000 })
+  await page.waitForSelector('.card.block .table', { timeout: 15000 })
   check('执行者看不到上传与沉淀入口',
-    await page.locator('.head-actions .btn', { hasText: '上传文档' }).count() === 0
-      && await page.locator('.head-actions .btn', { hasText: '沉淀历史措施' }).count() === 0)
+    await page.locator('.toolbar .btn', { hasText: '上传文档' }).count() === 0
+      && await page.locator('.btn', { hasText: '沉淀历史措施' }).count() === 0)
   check('执行者文档库不列生产部私有文档',
     await page.locator('.table tbody tr', { hasText: kbMark }).count() === 0)
-  await page.fill('.ask-bar textarea', kbMark)
-  await page.locator('.ask-controls button.btn-primary').click()
-  await page.waitForSelector('.result .result-head', { timeout: 15000 })
-  const exSearchHead = await page.locator('.result .result-head').innerText()
-  const exTotal = Number((exSearchHead.match(/命中 (\d+) 条/) || [])[1] || 0)
-  check('执行者检索其它部门私有文档零命中', exTotal === 0, exSearchHead.replace(/\n/g, ' '))
+  check('执行者知识库也不提供检索问答',
+    await page.locator('.ask-bar textarea').count() === 0
+      && await page.locator('.card.block', { hasText: '文档库' }).count() === 1)
   await page.screenshot({ path: `${SHOTS}/13-executor-kb.png`, fullPage: true })
 } catch (e) {
   check('脚本执行未中断', false, String(e).split('\n')[0])

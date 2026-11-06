@@ -3,6 +3,7 @@ import { request } from './http.js'
 /** 四个统计入口与 StatsController 对齐，from/to 均为 yyyy-MM-dd */
 export const statsApi = {
   overview: (params) => request({ url: '/stats/overview', method: 'get', params }),
+  rates: (params) => request({ url: '/stats/rates', method: 'get', params }),
   trend: (params) => request({ url: '/stats/trend', method: 'get', params }),
   process: (params) => request({ url: '/stats/process', method: 'get', params }),
   person: (params) => request({ url: '/stats/person', method: 'get', params })

@@ -236,14 +236,14 @@ public class TaskRepositoryImpl implements TaskRepository {
             String kw = query.keyword().trim();
             wrapper.and(w -> w.like("title", kw).or().like("task_no", kw));
         }
-        if (query.status() != null) {
-            wrapper.eq("status", query.status().name());
+        if (query.statuses() != null && !query.statuses().isEmpty()) {
+            wrapper.in("status", query.statuses().stream().map(Enum::name).toList());
         }
-        if (query.type() != null) {
-            wrapper.eq("type", query.type().name());
+        if (query.types() != null && !query.types().isEmpty()) {
+            wrapper.in("type", query.types().stream().map(Enum::name).toList());
         }
-        if (query.deptId() != null) {
-            wrapper.eq("dept_id", query.deptId());
+        if (query.deptIds() != null && !query.deptIds().isEmpty()) {
+            wrapper.in("dept_id", query.deptIds());
         }
         if (query.ownerId() != null) {
             wrapper.eq("owner_id", query.ownerId());

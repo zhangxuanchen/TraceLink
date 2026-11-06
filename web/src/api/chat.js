@@ -5,6 +5,7 @@ export const chatApi = {
   sessions: (limit = 50) => request({ url: '/chat/sessions', method: 'get', params: { limit } }),
   create: (data) => request({ url: '/chat/sessions', method: 'post', data }),
   archive: (id) => request({ url: `/chat/sessions/${id}/archive`, method: 'post' }),
+  clear: (id) => request({ url: `/chat/sessions/${id}/clear`, method: 'post' }),
   messages: (id, limit = 100) => request({
     url: `/chat/sessions/${id}/messages`,
     method: 'get',
@@ -23,12 +24,12 @@ export const CHAT_SCOPES = [
 export const QUESTION_MIN = 1
 export const QUESTION_MAX = 1000
 
-/** 首次进入会话页的示例问题：分别覆盖工单、统计、人员与知识四类工具 */
+/** 工单助手的示例问题：分别覆盖工单、统计、人员与工单相关制度四类工具 */
 export const CHAT_SAMPLES = [
   '生产部这周还有几张单没验收？',
   '这个月各部门完成率和逾期情况怎么样？',
   '张厚生现在手里有多少在办工单？',
-  '冲压工位毛刺超标，制度里怎么规定处理流程？'
+  '工单阻碍超过三天，制度里规定怎么升级处理？'
 ]
 
 /**
@@ -80,6 +81,7 @@ export async function askStream(sessionId, payload, handlers = {}, options = {})
     else if (event === 'delta') handlers.delta?.(data?.text || '')
     else if (event === 'citations') handlers.citations?.(data || [])
     else if (event === 'hint') handlers.hint?.(data)
+    else if (event === 'clarify') handlers.clarify?.(data?.questions || [])
     else if (event === 'done') {
       finished = true
       handlers.done?.(data)

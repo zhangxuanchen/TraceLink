@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2 class="page-title">完成地图</h2>
-        <p class="page-sub">九条条件逐条判定：矩阵看部门积压，排行看滞留，事项视图看一件事反复卡在哪一步</p>
+        <p class="page-sub">只列要处理的问题：矩阵标出还差哪条、卡了多久、由谁补；已达成的条件不再占格，排行看谁在拖，事项视图看一件事反复停在哪一步</p>
       </div>
       <div class="head-actions">
         <span v-if="inboxTotal" class="unread" @click="tab = 'inbox'">未读提醒 {{ inboxTotal }}</span>
@@ -60,18 +60,18 @@
             </td>
             <td class="col-holder">{{ row.assigneeName || '待认领' }}</td>
             <td class="col-rate num">{{ row.completionRate }}%</td>
-            <td v-for="cell in row.cells" :key="cell.code" class="gate-cell" :class="cellClass(cell)">
-              <template v-if="cell.state === 'DONE'">达成</template>
-              <template v-else-if="cell.state === 'TODO'"><b class="num">{{ cell.gapDays }}</b> 天</template>
-              <template v-else>—</template>
+            <td v-for="cell in row.cells" :key="cell.code" class="gate-cell" :class="cellClass(cell)"
+                :title="cellTitle(cell)">
+              <template v-if="cell.state === 'TODO'"><b class="num">{{ cell.gapDays }}</b> 天</template>
             </td>
           </tr>
         </tbody>
       </table>
       <div v-if="!matrix" class="empty">加载中…</div>
       <div v-else-if="!matrix.rows.length" class="empty">该部门没有在办工单</div>
-      <div v-if="matrix && matrix.total > matrix.rows.length" class="table-foot">
-        共 {{ matrix.total }} 张在办工单，当前展示前 {{ matrix.rows.length }} 张，按逾期与工单号排序
+      <div v-else-if="!sortedRows.length" class="empty">该部门在办工单的九条条件都已达成，没有要处理的问题</div>
+      <div v-if="matrix && matrix.rows.length" class="table-foot">
+        只标未达成条件与滞留天数，达成的格子留空：共 {{ matrix.total }} 张在办工单，当前展示前 {{ matrix.rows.length }} 张，按逾期与工单号排序
       </div>
     </div>
 
@@ -245,7 +245,8 @@ const snapshotHint = computed(() => {
 })
 
 const sortedRows = computed(() => {
-  const rows = [...(matrix.value?.rows || [])]
+  // 只留还有未达成条件的工单：正常（九条全达成）的单不进这张问题表
+  const rows = [...(matrix.value?.rows || [])].filter((row) => row.cells.some((cell) => cell.state === 'TODO'))
   if (!sortCode.value) return rows
   const index = matrix.value.columns.findIndex((c) => c.code === sortCode.value)
   if (index < 0) return rows
@@ -257,6 +258,12 @@ const sortedRows = computed(() => {
     return cb.gapDays - ca.gapDays
   })
 })
+
+function cellTitle(cell) {
+  if (cell.state === 'DONE') return '已达成，不再占格'
+  if (cell.state === 'NA') return '不适用'
+  return `未达成，已滞留 ${cell.gapDays} 天`
+}
 
 function cellClass(cell) {
   if (cell.state === 'DONE') return 'cell-done'
@@ -426,6 +433,9 @@ onMounted(async () => {
     await loadMatter()
     return
   }
+  if (route.query.deptId) {
+    deptId.value = Number(route.query.deptId) || null
+  }
   await loadMatrix()
 })
 </script>
@@ -553,19 +563,16 @@ onMounted(async () => {
   font-size: 12px;
 }
 
-.cell-done {
-  color: var(--ok);
-  background: rgba(46, 125, 50, 0.05);
+.cell-done,
+.cell-na {
+  background: none;
+  color: var(--txt-3);
 }
 
 .cell-todo {
   color: var(--bad);
   background: rgba(198, 40, 40, 0.06);
   font-weight: 500;
-}
-
-.cell-na {
-  color: var(--txt-3);
 }
 
 .row-overdue .t-title {

@@ -2,8 +2,8 @@
   <section>
     <div class="page-head">
       <div>
-        <h2 class="page-title">导入导出</h2>
-        <p class="page-sub">日报工作簿智能识别 → 预览校正 → 确认建单；导出模板与源文件同版式，可直接再导入</p>
+        <h2 class="page-title">导入向导</h2>
+        <p class="page-sub">日报工作簿智能识别 → 预览校正 → 确认建单；导出统一在工单中心的「导出工单与日报」里做</p>
       </div>
       <div class="head-actions">
         <button class="btn" @click="loadBatches">刷新批次</button>
@@ -173,52 +173,7 @@
           </div>
         </div>
 
-        <!-- 导出区 -->
-        <div class="card block">
-          <div class="block-head">
-            <h3>按模板导出</h3>
-            <span class="muted">五个固定版式，导出件可再次导入</span>
-          </div>
-          <div class="export-form">
-            <select v-model="exportForm.template" style="width: 160px">
-              <option v-for="t in EXPORT_TEMPLATES" :key="t.code" :value="t.code">{{ t.label }}</option>
-            </select>
-            <input v-model="exportForm.from" type="date" style="width: 148px" />
-            <span class="muted">至</span>
-            <input v-model="exportForm.to" type="date" style="width: 148px" />
-            <select v-model="exportForm.deptId" style="width: 150px">
-              <option :value="null">全部部门</option>
-              <option v-for="d in deptOptions" :key="d.id" :value="d.id">{{ d.name }}</option>
-            </select>
-            <select v-model="exportForm.employeeId" style="width: 150px">
-              <option :value="null">全部人员</option>
-              <option v-for="e in employeeOptions" :key="e.id" :value="e.id">{{ e.name }}</option>
-            </select>
-            <button class="btn btn-primary" :disabled="exporting" @click="createExport">
-              {{ exporting ? '生成中…' : '生成导出件' }}
-            </button>
-          </div>
-          <p class="muted small">{{ templateHint }}</p>
-
-          <table v-if="exports.length" class="table">
-            <thead>
-              <tr>
-                <th>模板</th><th>文件名</th><th class="num">行数</th><th>状态</th><th>生成时间</th><th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in exports" :key="item.id">
-                <td>{{ item.templateLabel }}</td>
-                <td class="small">{{ item.fileName || '—' }}</td>
-                <td class="num">{{ item.rowCnt ?? '—' }}</td>
-                <td><span class="tag" :class="EXPORT_STATUS_CLASS[item.status] || ''">{{ item.statusLabel }}</span></td>
-                <td class="num small">{{ item.createdAt }}</td>
-                <td><button class="btn-link" @click="downloadExport(item)">下载</button></td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-else class="empty">还没有导出记录</div>
-        </div>
+        <!-- 导出改到工单中心做，这里只保留导入链路 -->
       </div>
 
       <aside class="side-col">
@@ -243,20 +198,6 @@
             </div>
             <div v-if="item.errorMsg" class="batch-error">{{ item.errorMsg }}</div>
           </button>
-        </div>
-
-        <div class="card">
-          <div class="block-head"><h3>日报页</h3><span class="muted">最近 7 天</span></div>
-          <div v-if="!reports.length" class="empty">还没有日报页</div>
-          <div v-for="report in reports" :key="`${report.reportDate}-${report.reporterId}-${report.sourceSheet}`"
-               class="report-item">
-            <div class="report-date num">{{ report.reportDate }}</div>
-            <div class="report-meta">
-              <span>{{ report.reporterName || '—' }}</span>
-              <span class="muted">{{ report.sourceSheet }}</span>
-              <span class="num">{{ report.rowCount }} 行</span>
-            </div>
-          </div>
         </div>
       </aside>
     </div>
@@ -308,11 +249,12 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { importApi, downloadFile } from '../api/import.js'
-import { exportApi, EXPORT_TEMPLATES, EXPORT_STATUS_CLASS } from '../api/export.js'
-import { deptApi, employeeApi } from '../api/org.js'
-import { dayString } from '../api/stats.js'
+import { employeeApi } from '../api/org.js'
 import BaseModal from '../components/BaseModal.vue'
+
+const route = useRoute()
 
 const STEPS = [
   { key: 'upload', title: '上传工作簿', desc: '内容哈希幂等，同文件不重复解析' },
@@ -325,30 +267,17 @@ const batch = ref(null)
 const preview = ref(null)
 const result = ref(null)
 const batches = ref([])
-const reports = ref([])
-const exports = ref([])
-const deptOptions = ref([])
 const employeeOptions = ref([])
 const keyword = ref('')
 const onlyIssues = ref(true)
 const dragging = ref(false)
 const uploading = ref(false)
 const confirming = ref(false)
-const exporting = ref(false)
 const error = ref('')
 const editing = ref(null)
 const editError = ref('')
 const saving = ref(false)
 const editForm = ref({ title: '', assigneeId: '', planEnd: '', action: 'CREATE', resultText: '', problemText: '' })
-
-const today = new Date()
-const exportForm = ref({
-  template: 'DAILY',
-  from: dayString(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6)),
-  to: dayString(today),
-  deptId: null,
-  employeeId: null
-})
 
 const activeSheets = computed(() => (preview.value?.sheets || []).filter((s) => !s.empty))
 
@@ -362,11 +291,6 @@ const filteredRows = computed(() => {
       || (row.assigneeName || row.assigneeText || '').includes(kw)
       || (row.reporterName || '').includes(kw)
   })
-})
-
-const templateHint = computed(() => {
-  const found = EXPORT_TEMPLATES.find((t) => t.code === exportForm.value.template)
-  return found ? found.desc : ''
 })
 
 function percent(value) {
@@ -400,46 +324,12 @@ async function loadBatches() {
   }
 }
 
-async function loadReports() {
-  const to = new Date()
-  const from = new Date()
-  from.setDate(to.getDate() - 6)
-  try {
-    reports.value = await importApi.reports({ from: dayString(from), to: dayString(to) })
-  } catch (e) {
-    reports.value = []
-  }
-}
-
-async function loadExports() {
-  try {
-    exports.value = await exportApi.list()
-  } catch (e) {
-    exports.value = []
-  }
-}
-
-async function loadRefs() {
-  try {
-    const tree = await deptApi.tree()
-    deptOptions.value = flatten(tree)
-  } catch (e) {
-    deptOptions.value = []
-  }
+async function loadEmployees() {
   try {
     employeeOptions.value = await employeeApi.options()
   } catch (e) {
     employeeOptions.value = []
   }
-}
-
-function flatten(nodes, level = 1) {
-  const list = []
-  for (const node of nodes || []) {
-    list.push({ id: node.id, name: node.name, level })
-    list.push(...flatten(node.children, level + 1))
-  }
-  return list
 }
 
 function onDrop(event) {
@@ -468,7 +358,6 @@ async function upload(file) {
     stepNo.value = 2
     await loadBatches()
     await loadPreview()
-    await loadReports()
   } catch (e) {
     error.value = e.message
   } finally {
@@ -568,35 +457,6 @@ async function downloadReport() {
   }
 }
 
-async function createExport() {
-  exporting.value = true
-  error.value = ''
-  try {
-    await exportApi.create({
-      template: exportForm.value.template,
-      from: exportForm.value.from,
-      to: exportForm.value.to,
-      deptId: exportForm.value.deptId,
-      employeeId: exportForm.value.employeeId,
-      reportDate: null,
-      remark: null
-    })
-    await loadExports()
-  } catch (e) {
-    error.value = e.message
-  } finally {
-    exporting.value = false
-  }
-}
-
-async function downloadExport(item) {
-  try {
-    await exportApi.download(item.id, item.fileName || `导出件-${item.id}.xlsx`)
-  } catch (e) {
-    error.value = e.message
-  }
-}
-
 function resetWizard() {
   stepNo.value = 1
   batch.value = null
@@ -606,7 +466,12 @@ function resetWizard() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadBatches(), loadReports(), loadExports(), loadRefs()])
+  await Promise.all([loadBatches(), loadEmployees()])
+  const batchId = Number(route.query.batch)
+  if (batchId) {
+    const found = batches.value.find((item) => Number(item.id) === batchId)
+    await openBatch(found || { id: batchId })
+  }
 })
 </script>
 
@@ -890,14 +755,6 @@ onMounted(async () => {
   margin: 0 0 12px;
 }
 
-.export-form {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-
 .batch {
   display: flex;
   flex-direction: column;
@@ -951,27 +808,6 @@ onMounted(async () => {
   color: var(--bad);
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.report-item {
-  padding: 8px 12px;
-  border-top: 1px solid var(--divider);
-}
-
-.report-item:first-of-type {
-  border-top: none;
-}
-
-.report-date {
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.report-meta {
-  display: flex;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--txt-2);
 }
 
 .edit-error {

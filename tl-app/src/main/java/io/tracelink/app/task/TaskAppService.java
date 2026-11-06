@@ -43,6 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -94,14 +95,14 @@ public class TaskAppService {
 
     // ---------------------------------------------------------------- 查询
 
-    public PageResult<TaskView> page(AuthUser actor, String keyword, String status, String type, Long deptId,
+    public PageResult<TaskView> page(AuthUser actor, String keyword, String status, String type, String deptId,
                                      Long ownerId, Long primaryAssigneeId, boolean mine, boolean overdueOnly,
                                      boolean blockedOnly, int pageNo, int pageSize) {
         TaskScope scope = scopeOf(actor);
-        if (deptId != null) {
-            assertDeptInScope(deptId, scope);
-        }
-        TaskQuery query = new TaskQuery(keyword, parseStatus(status), parseType(type), deptId, ownerId,
+        List<Long> deptIds = parseDeptIds(deptId);
+        deptIds.forEach(id -> assertDeptInScope(id, scope));
+        TaskQuery query = new TaskQuery(keyword, parseStatuses(status), parseTypes(type),
+                deptIds.isEmpty() ? null : deptIds, ownerId,
                 primaryAssigneeId, mine, overdueOnly, blockedOnly, LocalDateTime.now(), scope,
                 Math.max(1, pageNo), Math.min(Math.max(1, pageSize), MAX_PAGE_SIZE));
         PageResult<Task> page = taskRepository.page(query);
@@ -782,8 +783,8 @@ public class TaskAppService {
     }
 
     private long count(TaskScope scope, TaskStatus status, boolean mine, boolean overdueOnly) {
-        TaskQuery query = new TaskQuery(null, status, null, null, null, null, mine,
-                overdueOnly, false, LocalDateTime.now(), scope, 1, 1);
+        TaskQuery query = new TaskQuery(null, status == null ? null : List.of(status), null, null,
+                null, null, mine, overdueOnly, false, LocalDateTime.now(), scope, 1, 1);
         return taskRepository.count(query);
     }
 
@@ -829,6 +830,43 @@ public class TaskAppService {
             throw BizException.invalid(message);
         }
         return value.trim();
+    }
+
+    private List<TaskStatus> parseStatuses(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .map(this::parseStatus)
+                .toList();
+    }
+
+    private List<TaskType> parseTypes(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .map(this::parseType)
+                .toList();
+    }
+
+    private List<Long> parseDeptIds(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        try {
+            return Arrays.stream(value.split(","))
+                    .map(String::trim)
+                    .filter(item -> !item.isEmpty())
+                    .map(Long::valueOf)
+                    .toList();
+        } catch (NumberFormatException e) {
+            throw BizException.invalid("部门取值不合法：" + value);
+        }
     }
 
     private TaskStatus parseStatus(String value) {

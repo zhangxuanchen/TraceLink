@@ -250,7 +250,7 @@ public class CompletionMapAppService {
         List<Long> deptIds = deptIdsInScope(actor, deptId, depts);
         LocalDate latest = snapshotRepository.latestDate();
         if (latest == null) {
-            return new GapRankView(null, true, 0, List.of(), List.of(), List.of());
+            return new GapRankView(null, true, 0, List.of(), List.of(), List.of(), List.of());
         }
         List<TaskGateSnapshot> snapshots = snapshotRepository.findByDateAndDepts(latest, deptIds);
         List<Long> taskIds = snapshots.stream().map(s -> s.taskId).distinct().toList();
@@ -261,9 +261,24 @@ public class CompletionMapAppService {
 
         Map<GateCode, int[]> byGate = new LinkedHashMap<>();
         Map<Long, int[]> byHolder = new LinkedHashMap<>();
+        Map<Long, int[]> byDept = new LinkedHashMap<>();
+        Map<Long, String> deptNames = depts.stream()
+                .collect(Collectors.toMap(Dept::getId, Dept::getName, (a, b) -> a));
         List<GapRankView.TopTask> top = new ArrayList<>();
         int totalTodo = 0;
         for (TaskGateSnapshot row : snapshots) {
+            if (row.state == GateState.NA) {
+                continue;
+            }
+            Task task = taskById.get(row.taskId);
+            if (task != null && task.deptId != null) {
+                int[] dept = byDept.computeIfAbsent(task.deptId, k -> new int[3]);
+                dept[2]++;
+                if (row.state == GateState.TODO) {
+                    dept[0]++;
+                    dept[1] = Math.max(dept[1], row.gapValue());
+                }
+            }
             if (row.state != GateState.TODO) {
                 continue;
             }
@@ -275,7 +290,6 @@ public class CompletionMapAppService {
             int[] person = byHolder.computeIfAbsent(holder == null ? 0L : holder, k -> new int[2]);
             person[0]++;
             person[1] = Math.max(person[1], row.gapValue());
-            Task task = taskById.get(row.taskId);
             top.add(new GapRankView.TopTask(row.taskId, task == null ? null : task.taskNo,
                     task == null ? null : task.title, row.gateCode.name(), row.gateCode.title(),
                     row.gapValue(), names.get(holder)));
@@ -291,12 +305,19 @@ public class CompletionMapAppService {
                         e.getKey() == 0L ? "未指定" : names.get(e.getKey()), e.getValue()[0], e.getValue()[1]))
                 .sorted(Comparator.comparingInt(GapRankView.ByHolder::todoCount).reversed())
                 .toList();
+        List<GapRankView.ByDept> deptViews = byDept.entrySet().stream()
+                .map(e -> new GapRankView.ByDept(e.getKey(),
+                        deptNames.getOrDefault(e.getKey(), "未分配部门"),
+                        e.getValue()[0], e.getValue()[2], e.getValue()[1]))
+                .sorted(Comparator.comparingInt(GapRankView.ByDept::todoCount).reversed()
+                        .thenComparing(Comparator.comparingInt(GapRankView.ByDept::maxGapDays).reversed()))
+                .toList();
         top.sort(Comparator.comparingInt(GapRankView.TopTask::gapDays).reversed());
         if (top.size() > 20) {
             top = top.subList(0, 20);
         }
         return new GapRankView(latest.format(DAY), latest.isBefore(LocalDate.now()), totalTodo,
-                gateViews, holderViews, top);
+                gateViews, holderViews, deptViews, top);
     }
 
     // ---------------------------------------------------------------- CMP-4 事项地图

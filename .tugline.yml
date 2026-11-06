@@ -1,0 +1,6 @@
+# TraceLink 自报部署元信息
+# Tugline 拉取后自动读取，无需在控制台重复配置
+tugline:
+  display-name: TraceLink 工单系统
+  health-path: /
+  preview-path: /index.html

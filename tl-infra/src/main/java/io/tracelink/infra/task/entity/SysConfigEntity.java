@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
+import java.time.LocalDateTime;
+
 @TableName("sys_config")
 public class SysConfigEntity {
 
@@ -15,4 +17,6 @@ public class SysConfigEntity {
     public String groupCode;
     public String remark;
     public Long updatedBy;
+    public LocalDateTime createdAt;
+    public LocalDateTime updatedAt;
 }

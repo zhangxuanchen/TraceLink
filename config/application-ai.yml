@@ -11,7 +11,7 @@ trace-link:
       chat:
         model: ${ARK_CHAT_MODEL}
         temperature: 0.2
-        max-tokens: 2048
+        max-tokens: 4096
         stream: true
         timeout: 30s
       embedding:

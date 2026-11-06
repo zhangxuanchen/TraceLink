@@ -24,6 +24,10 @@ import io.tracelink.domain.stat.model.TaskMetric;
 import io.tracelink.domain.stat.repository.TaskMetricRepository;
 import io.tracelink.domain.storage.FileStorage;
 import io.tracelink.domain.task.model.Task;
+import io.tracelink.domain.task.model.TaskAssignee;
+import io.tracelink.domain.task.model.TaskStatus;
+import io.tracelink.domain.task.model.TaskType;
+import io.tracelink.domain.task.repository.TaskAssigneeRepository;
 import io.tracelink.domain.task.repository.TaskRepository;
 import io.tracelink.app.stats.DeptStat;
 import io.tracelink.app.stats.HeatCell;
@@ -36,6 +40,7 @@ import io.tracelink.app.stats.StatsAppService;
 import io.tracelink.app.stats.StatsOverviewView;
 import io.tracelink.app.stats.StatsPersonView;
 import io.tracelink.app.stats.StatsProcessView;
+import io.tracelink.app.stats.StatsRatesView;
 import io.tracelink.app.stats.TaskRefView;
 import io.tracelink.app.stats.TrendPoint;
 import org.springframework.stereotype.Service;
@@ -45,15 +50,20 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * 导出应用服务：五种固定模板，同步生成后落库并保留任务记录。
+ * 导出应用服务：六种固定模板，同步生成后落库并保留任务记录。
  * 日报模板与源文件一比一（标题、元信息、10 列表头、表尾生产块），导出件能被 {@link io.tracelink.infra.importing.parser.PoiWorkbookParser}
  * 原样读回，因此同一份日报再次导入只会命中已有工单走归并，不会重复建单。
  */
@@ -69,6 +79,9 @@ public class ExportAppService {
     private static final DateTimeFormatter DAY_TITLE = DateTimeFormatter.ofPattern("yyyy年M月d日");
     private static final List<String> DAILY_HEADERS = List.of("序号", "工作内容", "时间安排", "负责人", "责任人",
             "参与人", "遇到的问题", "解决方案", "汇报结果（未完成原因/追踪的结果）", "备注：具体数据");
+    /** 七项率的列顺序，与统计看板顶部 KPI 卡一致（DESIGN 4.4） */
+    private static final List<String> RATE_CODES = List.of("completion_rate", "on_time_rate", "avg_hours",
+            "overdue_rate", "first_pass_rate", "evidence_rate", "recurrence_rate");
 
     private final ExportTaskRepository exportTaskRepository;
     private final FileStorage fileStorage;
@@ -76,6 +89,7 @@ public class ExportAppService {
     private final DailyReportRepository dailyReportRepository;
     private final TaskMetricRepository taskMetricRepository;
     private final TaskRepository taskRepository;
+    private final TaskAssigneeRepository taskAssigneeRepository;
     private final EmployeeRepository employeeRepository;
     private final DeptRepository deptRepository;
     private final StatsAppService statsAppService;
@@ -88,6 +102,7 @@ public class ExportAppService {
                             DailyReportRepository dailyReportRepository,
                             TaskMetricRepository taskMetricRepository,
                             TaskRepository taskRepository,
+                            TaskAssigneeRepository taskAssigneeRepository,
                             EmployeeRepository employeeRepository,
                             DeptRepository deptRepository,
                             StatsAppService statsAppService,
@@ -99,6 +114,7 @@ public class ExportAppService {
         this.dailyReportRepository = dailyReportRepository;
         this.taskMetricRepository = taskMetricRepository;
         this.taskRepository = taskRepository;
+        this.taskAssigneeRepository = taskAssigneeRepository;
         this.employeeRepository = employeeRepository;
         this.deptRepository = deptRepository;
         this.statsAppService = statsAppService;
@@ -120,9 +136,10 @@ public class ExportAppService {
         ExportWorkbook workbook = switch (template) {
             case DAILY -> buildDaily(from, to, request.employeeId());
             case WEEKLY -> buildWeekly(actor, from, to, request.deptId());
-            case LEDGER -> buildLedger(from, to, request.deptId(), request.employeeId());
+            case LEDGER -> buildLedger(actor, from, to, request);
             case PERF -> buildPerf(actor, from, to, request.deptId());
             case CHART -> buildCharts(actor, from, to, request.deptId());
+            case RATES -> buildRates(actor, from, to, request.deptId());
         };
         int rowCnt = workbook.sheets.stream()
                 .mapToInt(s -> s.rows.size() + s.footerRows.size())
@@ -137,7 +154,10 @@ public class ExportAppService {
         ExportTask task = new ExportTask();
         task.templateCode = template;
         task.params = json(Map.of("from", from.toString(), "to", to.toString(),
-                "deptId", String.valueOf(request.deptId()), "employeeId", String.valueOf(request.employeeId())));
+                "deptId", String.valueOf(request.deptId()), "employeeId", String.valueOf(request.employeeId()),
+                "keyword", String.valueOf(request.keyword()), "status", String.valueOf(request.status()),
+                "type", String.valueOf(request.type()), "overdueOnly", String.valueOf(request.overdueOnly()),
+                "blockedOnly", String.valueOf(request.blockedOnly()), "mine", String.valueOf(request.mine())));
         task.status = ExportStatus.DONE;
         task.fileKey = stored.key();
         task.rowCnt = rowCnt;
@@ -354,30 +374,36 @@ public class ExportAppService {
 
     // ---------------------------------------------------------------- 台账模板
 
-    private ExportWorkbook buildLedger(LocalDate from, LocalDate to, Long deptId, Long employeeId) {
+    private ExportWorkbook buildLedger(AuthUser actor, LocalDate from, LocalDate to, ExportRequest request) {
         ExportWorkbook workbook = new ExportWorkbook();
         ExportSheet sheet = workbook.add("工单台账");
-        sheet.title = "工单台账 · " + from + " 至 " + to;
+        sheet.title = "工单台账 · " + from + " 至 " + to + (request.hasTaskFilter() ? "（按综合筛选）" : "");
         sheet.headers = List.of("工单号", "标题", "类型", "来源", "部门", "负责人", "主责人", "状态",
                 "优先级", "计划完成", "实际完成", "进度(%)", "逾期次数", "退回次数", "催办次数", "结果摘要");
         Map<Long, String> depts = deptNames();
         Map<Long, String> names = employeeNames();
         // 台账口径：区间内新建的工单，加上计划完成落在区间内的工单（补录的历史明细也要能看到）
+        // 部门多选时先按角色可见范围取全量，再在逐行判定里取并集
+        List<Long> deptIds = request.deptIds() == null ? List.of() : request.deptIds();
+        Long scopeDept = deptIds.size() == 1 ? deptIds.get(0) : (deptIds.isEmpty() ? request.deptId() : null);
         Map<Long, Task> scope = new LinkedHashMap<>();
-        for (Task task : taskRepository.findCreatedBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay(), deptId)) {
+        for (Task task : taskRepository.findCreatedBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay(),
+                scopeDept)) {
             scope.put(task.id, task);
         }
-        for (Task task : taskRepository.findPlannedBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay(), deptId)) {
+        for (Task task : taskRepository.findPlannedBetween(from.atStartOfDay(), to.plusDays(1).atStartOfDay(),
+                scopeDept)) {
             scope.put(task.id, task);
         }
+        List<TaskStatus> statuses = parseStatuses(request.status());
+        List<TaskType> types = parseTypes(request.type());
+        Set<Long> mineIds = request.mine()
+                ? mineTaskIds(actor, new ArrayList<>(scope.keySet())) : Set.of();
         List<Task> tasks = new ArrayList<>(scope.values());
+        tasks.removeIf(task -> !matchesLedger(task, request, statuses, types, deptIds, mineIds, actor));
         tasks.sort(Comparator.comparing(t -> t.taskNo == null ? "" : t.taskNo));
         int count = 0;
         for (Task task : tasks) {
-            if (employeeId != null && !employeeId.equals(task.primaryAssigneeId)
-                    && !employeeId.equals(task.ownerId)) {
-                continue;
-            }
             sheet.rows.add(List.of(
                     task.taskNo == null ? "" : task.taskNo,
                     task.title == null ? "" : task.title,
@@ -399,9 +425,119 @@ public class ExportAppService {
         }
         sheet.columnWidths = new int[]{18, 36, 10, 10, 16, 12, 12, 10, 8, 16, 16, 8, 8, 8, 8, 40};
         if (count == 0) {
-            sheet.rows.add(List.of("（区间内没有工单）", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""));
+            sheet.rows.add(List.of(request.hasTaskFilter() ? "（没有符合综合筛选的工单）" : "（区间内没有工单）",
+                    "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""));
         }
         return workbook;
+    }
+
+    /**
+     * 台账按列表页那套综合筛选逐行判定：关键词查标题与工单号，状态与类型精确匹配，
+     * 只看逾期取「未结案且计划完成已过」，「与我相关」同列表页口径（负责人、主责或协办）。
+     */
+    private boolean matchesLedger(Task task, ExportRequest request, List<TaskStatus> statuses,
+                                  List<TaskType> types, List<Long> deptIds,
+                                  Set<Long> mineIds, AuthUser actor) {
+        String keyword = request.keyword() == null ? "" : request.keyword().trim();
+        if (!keyword.isEmpty()) {
+            boolean hit = (task.title != null && task.title.contains(keyword))
+                    || (task.taskNo != null && task.taskNo.contains(keyword));
+            if (!hit) {
+                return false;
+            }
+        }
+        if (!statuses.isEmpty() && (task.status == null || !statuses.contains(task.status))) {
+            return false;
+        }
+        if (!types.isEmpty() && (task.type == null || !types.contains(task.type))) {
+            return false;
+        }
+        if (!deptIds.isEmpty() && (task.deptId == null || !deptIds.contains(task.deptId))) {
+            return false;
+        }
+        if (request.employeeId() != null && !request.employeeId().equals(task.primaryAssigneeId)
+                && !request.employeeId().equals(task.ownerId)) {
+            return false;
+        }
+        if (request.blockedOnly() && task.status != TaskStatus.BLOCKED) {
+            return false;
+        }
+        if (request.overdueOnly()) {
+            boolean open = task.status != null && task.status.isOpen();
+            boolean late = task.planEnd != null && task.planEnd.isBefore(LocalDateTime.now());
+            if (!open || !late) {
+                return false;
+            }
+        }
+        if (request.mine() && !isMine(task, actor, mineIds)) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isMine(Task task, AuthUser actor, Set<Long> mineIds) {
+        if (actor == null || actor.employeeId() == null) {
+            return false;
+        }
+        Long me = actor.employeeId();
+        return me.equals(task.ownerId) || me.equals(task.primaryAssigneeId) || mineIds.contains(task.id);
+    }
+
+    private Set<Long> mineTaskIds(AuthUser actor, List<Long> taskIds) {
+        if (actor == null || actor.employeeId() == null || taskIds.isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> ids = new HashSet<>();
+        for (TaskAssignee assignee : taskAssigneeRepository.listByTaskIds(taskIds)) {
+            if (actor.employeeId().equals(assignee.employeeId)) {
+                ids.add(assignee.taskId);
+            }
+        }
+        return ids;
+    }
+
+    private List<TaskStatus> parseStatuses(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .map(this::parseStatus)
+                .toList();
+    }
+
+    private List<TaskType> parseTypes(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isEmpty())
+                .map(this::parseType)
+                .toList();
+    }
+
+    private TaskStatus parseStatus(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return TaskStatus.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw BizException.invalid("状态取值不合法：" + value);
+        }
+    }
+
+    private TaskType parseType(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return TaskType.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw BizException.invalid("工单类型不合法：" + value);
+        }
     }
 
     // ---------------------------------------------------------------- 绩效模板
@@ -428,6 +564,53 @@ public class ExportAppService {
             radar.rows.add(List.of(dim.label(), String.valueOf(dim.value())));
         }
         return workbook;
+    }
+
+    // ---------------------------------------------------------------- 部门与个人率表
+
+    /** 统计看板的部门 / 个人两张率表，七项口径与页面 KPI 卡同源（DESIGN 4.4） */
+    private ExportWorkbook buildRates(AuthUser actor, LocalDate from, LocalDate to, Long deptId) {
+        StatsRatesView rates = statsAppService.rates(actor, from, to, deptId);
+        ExportWorkbook workbook = new ExportWorkbook();
+
+        ExportSheet depts = workbook.add("部门维度");
+        depts.title = "部门七项率 · " + from + " 至 " + to;
+        depts.headers = List.of("部门", "工单数", "完成率(%)", "按时完成率(%)",
+                "平均完成时长(小时)", "逾期率(%)", "一次通过率(%)", "结果留痕率(%)", "复发率(%)");
+        for (StatsRatesView.RateRow row : rates.depts()) {
+            depts.rows.add(rateCells(row, false));
+        }
+        depts.columnWidths = new int[]{18, 8, 12, 14, 18, 10, 14, 14, 12};
+
+        ExportSheet persons = workbook.add("个人维度");
+        persons.title = "个人七项率 · " + from + " 至 " + to;
+        persons.headers = List.of("人员", "部门", "工单数", "完成率(%)", "按时完成率(%)",
+                "平均完成时长(小时)", "逾期率(%)", "一次通过率(%)", "结果留痕率(%)", "复发率(%)");
+        for (StatsRatesView.RateRow row : rates.persons()) {
+            persons.rows.add(rateCells(row, true));
+        }
+        persons.columnWidths = new int[]{14, 16, 8, 12, 14, 18, 10, 14, 14, 12};
+        return workbook;
+    }
+
+    private List<String> rateCells(StatsRatesView.RateRow row, boolean withDept) {
+        List<String> cells = new ArrayList<>();
+        cells.add(row.name() == null ? "" : row.name());
+        if (withDept) {
+            cells.add(row.deptName() == null ? "" : row.deptName());
+        }
+        cells.add(String.valueOf(row.tasks()));
+        for (String code : RATE_CODES) {
+            String value = "—";
+            for (KpiView kpi : row.kpis()) {
+                if (code.equals(kpi.code())) {
+                    value = String.format(Locale.ROOT, "%.1f", kpi.value());
+                    break;
+                }
+            }
+            cells.add(value);
+        }
+        return cells;
     }
 
     // ---------------------------------------------------------------- 图表模板

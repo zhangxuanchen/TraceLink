@@ -1,6 +1,6 @@
 # 模型接入配置（火山引擎 Ark）
 
-版本 v0.2　编写日期 2026-11-01　对应 `docs/DESIGN.md` 的 3.5（模型选型）、4.7（知识库）与第 7 章（失败处理）
+版本 v0.3　编写日期 2026-11-02　对应 `docs/DESIGN.md` 的 3.5（模型选型）、4.7（知识库）与第 7 章（失败处理）
 
 线上跑在火山引擎方舟（Ark）上的两类模型：对话模型负责问答、抽取、评价与建议，向量模型负责知识切片与检索。两类都走 Ark 的 OpenAI 兼容接口。对话模型在应用进程里由 AgentScope 的 OpenAI 适配器调用；向量与重排模型在 RAGFlow 侧配置，由 RAGFlow 在解析与检索时调用，应用进程不直接调它们。
 
@@ -20,7 +20,7 @@
 
 在火山引擎方舟控制台开通模型服务，创建推理接入点，得到三类信息：接入点 ID（形如 `ep-...`）、可用的模型标识、调用域名。对话与向量各建一个接入点，分开计费也分开限流。
 
-`model-name` 这一项填接入点 ID 还是模型标识，取决于控制台给出的形态，两种在 Ark 上都出现过，以控制台为准。配置里留成了一个环境变量，换形态只改环境变量不改代码。
+`model-name` 这一项填接入点 ID 还是模型标识，取决于控制台给出的形态，两种在 Ark 上都出现过，以控制台为准。这一项不论是环境变量还是页面「模型配置」里都能改，换形态不需要动代码。
 
 2026-11-01 在本机实测：只带 `Authorization: Bearer` 的推理密钥、把 `model` 直接写成模型标识也能通（本机验证可用的对话模型是 `doubao-seed-2-0-mini-260428`），不需要接入点 ID。`GET $ARK_BASE_URL/models` 能列出该账号可见的 138 个模型，其中 55 个未下线；未开通的模型会返回 `404 ModelNotOpen`（提示到控制台开通），所以选型时先用第 7 节的 curl 探一次，再把可用模型写进 `ARK_CHAT_MODEL`。
 
@@ -32,7 +32,7 @@
 | `trace-link.ai.ark.api-key` | 推理密钥，从环境变量注入 | — | 是 |
 | `trace-link.ai.ark.chat.model` | 对话接入点或模型标识 | — | 是 |
 | `trace-link.ai.ark.chat.timeout` | 单次对话超时 | 30 秒 | 否 |
-| `trace-link.ai.ark.chat.max-tokens` | 单次生成上限 | 2048 | 否 |
+| `trace-link.ai.ark.chat.max-tokens` | 单次生成上限（含推理 token，推理模型给 4096 起） | 4096 | 否 |
 | `trace-link.ai.ark.chat.temperature` | 采样温度，抽取类任务要低 | 0.2 | 否 |
 | `trace-link.ai.ark.embedding.model` | 向量接入点或模型标识，仅回退路径与 RAGFlow 对齐用 | — | 否 |
 | `trace-link.ai.ark.embedding.dim` | 向量维度，必须与 RAGFlow 侧配置一致 | 待探测 | 否 |
@@ -46,7 +46,28 @@
 
 以上初值与 `docs/DESIGN.md` 第 7 章的超时口径一致，试点期用真实分布校准。
 
-## 4 示例配置
+前三项（`base-url`、`api-key`、`chat.model`）有两处落点：环境变量或配置文件（部署时定），以及页面「模型配置」（运行期改）。两处都填时**页面优先**，页面上清空才回落到环境变量。页面写的三条记录在 `sys_config` 里，键名去掉 `trace-link.` 前缀：`ai.ark.base-url`、`ai.ark.api-key`、`ai.ark.chat.model`，分组 `AI`，由 `V13__ai_model_config.sql` 初始化。
+
+## 4 配置方式与示例
+
+### 4.1 页面在线配置（推荐）
+
+页面入口在侧栏「系统设置 → 模型配置」（`#/settings/model`），管理员与管理者可见，只有系统管理员能保存。原来的「模板与参数」「审计日志」两个页面已下线，旧链接会回到这里；后端的 `GET /configs`、`/gate-rules`、`/audit-logs` 接口保留。
+
+| 字段 | 填法 | 校验 |
+|---|---|---|
+| 接口地址 | 默认 `https://ark.cn-beijing.volces.com/api/v3` | 必须以 `http://` 或 `https://` 开头 |
+| 模型 ID | 控制台给的模型标识或推理接入点 ID，例如 `deepseek-v4-1-flash-economy-261017` | 非空 |
+| API Key | 从控制台整段复制 | 非空时长度不少于 8；留空表示沿用已保存的密钥 |
+
+两个按钮的区别要分清：
+
+- **保存并生效**（`PUT /api/v1/ai/config`）：写 `sys_config`，智能层每轮经 `AiSettingsPort` 读一次运行期配置，**保存后下一轮调用即生效，不必重启 tl-api**。有改动时写一条 `SYS_CONFIG` 审计，`before/after` 里的密钥只记末四位掩码。
+- **用已保存配置自检**（`POST /api/v1/ai/config/test`）：读当前生效配置，打一次最小对话请求（`max_tokens=8`、`stream=false`），返回 `ok`、HTTP 状态码、耗时、模型名与返回片段。`ok=true` 说明密钥、模型 ID 与出网都通。
+
+页面只回显密钥末四位（形如 `****a2da`），明文不出接口；来源标签区分「页面配置 / 环境变量 / 未配置」，据此判断当前生效的是哪一处。2026-11-02 本机实测：`GET /api/v1/ai/config` 返回 `chatModel=deepseek-v4-1-flash-economy-261017`、`apiKeyMasked=****a2da`、`source=页面配置`、`editable=true`；`POST /api/v1/ai/config/test` 返回 `ok=true`、HTTP 200、约 1.0s、tokens 39。
+
+### 4.2 环境变量方式
 
 配置文件在 `config/application-ai.yml`，通过 `spring.profiles.include` 或 `spring.config.import` 引入。数值只给形状，生产以实际配额为准。
 
@@ -60,7 +81,7 @@ trace-link:
       chat:
         model: ${ARK_CHAT_MODEL}
         temperature: 0.2
-        max-tokens: 2048
+        max-tokens: 4096
         stream: true
       embedding:
         model: ${ARK_EMBEDDING_MODEL}
@@ -167,7 +188,7 @@ source deploy/ragflow/.env.tracelink
 
 ## 7 连通性自检
 
-两段 `curl` 足够判断是密钥错、模型名错还是网络不通；本机也可以直接跑 `bash scripts/ai-restart.sh --check-only`，它读 `config/.env` 后做第一段自检并打印 HTTP 码、返回片段与 tokens。第一段验对话：
+两段 `curl` 足够判断是密钥错、模型名错还是网络不通；本机也可以直接跑 `bash scripts/ai-restart.sh --check-only`，它读 `config/.env` 后做第一段自检并打印 HTTP 码、返回片段与 tokens。最省事的是页面上的「用已保存配置自检」按钮（`POST /api/v1/ai/config/test`），它用当前生效的配置打同一个请求，结果里带 HTTP 码、耗时与返回片段，不用离开页面。第一段验对话：
 
 ```bash
 # 密钥与模型写在 config/.env（已 gitignore），填好后可直接用脚本自检
@@ -198,13 +219,15 @@ curl -sS "$ARK_BASE_URL/embeddings" \
 
 会话链路的降级不一样，因为用户正在等。模型不可用或失败时不出错中断，而是用工具与检索结果拼一条规则回答，在 `done` 事件里标 `degraded=true`、`model=RULE`，页面据此标注「规则回答（降级）」，本轮不算模型判断。这一条写在 4.8 与第 7 章。
 
-本机填写与生效只有两步：把 `ARK_API_KEY`、`ARK_CHAT_MODEL`（可选 `ARK_EMBEDDING_MODEL`、`RAGFLOW_*`）写进 `config/.env`，然后跑 `bash scripts/ai-restart.sh`——先做一次对话自检，通过后带这套环境变量重启 tl-api 并等健康检查。`--check-only` 只自检不重启。注意 Agent 型 Shell 会在命令结束时回收子进程，那种环境要用后台执行方式启动 `java -jar tl-api/target/tracelink.jar`。
+本机填写与生效有两条路。页面路径：在「模型配置」填地址、模型 ID 与 API Key，点「保存并生效」，下一轮调用即生效，不重启进程。环境变量路径：把 `ARK_API_KEY`、`ARK_CHAT_MODEL`（可选 `ARK_EMBEDDING_MODEL`、`RAGFLOW_*`）写进 `config/.env`，然后跑 `bash scripts/ai-restart.sh`——先做一次对话自检，通过后带这套环境变量重启 tl-api 并等健康检查。`--check-only` 只自检不重启。注意 Agent 型 Shell 会在命令结束时回收子进程，那种环境要用后台执行方式启动 `java -jar tl-api/target/tracelink.jar`。
 
 ## 9 密钥管理与轮换
 
-密钥不落明文。运行期从环境变量读，需要落库的部分（例如按部门配置不同接入点时）用 AES-GCM 加密，主密钥 `TL_SECRET_MASTER_KEY` 只放环境变量，不写进任何配置文件与镜像。加密字段的写法在 `docs/DESIGN.md` 8.1 已列。
+密钥的规范落点仍是环境变量：运行期从环境变量读，需要落库的部分（例如按部门配置不同接入点时）用 AES-GCM 加密，主密钥 `TL_SECRET_MASTER_KEY` 只放环境变量，不写进任何配置文件与镜像。加密字段的写法在 `docs/DESIGN.md` 8.1 已列。
 
-轮换按四步走：先在控制台建新密钥并同时保留旧密钥，再更新环境变量并滚动重启，然后观察一天日志确认没有鉴权失败，最后停用旧密钥。顺序不能倒，否则重启窗口内的请求全部失败。
+页面「模型配置」是本机试点阶段的便利入口，它为这一条开了一个已知例外：保存的 AK 以明文写本机库 `sys_config` 的 `ai.ark.api-key`。可接受的边界有三条——库只在本机、`sys_config` 不对普通角色开放、接口与审计日志里的密钥只出现末四位掩码。**上生产前要把这条例外收掉**，二选一：关掉页面保存、只走环境变量；或把该键改成加密列，页面写入前用 `TL_SECRET_MASTER_KEY` 加密，`AiSettingsPort` 读时解密。无论走哪条，页面「来源」标签都会如实显示当前生效的是页面配置还是环境变量。
+
+轮换按四步走：先在控制台建新密钥并同时保留旧密钥，再更新环境变量并滚动重启（页面配置则可直接改，改完点自检确认），然后观察一天日志确认没有鉴权失败，最后停用旧密钥。顺序不能倒，否则切换窗口内的请求全部失败。
 
 ## 10 成本与配额
 
@@ -214,7 +237,7 @@ curl -sS "$ARK_BASE_URL/embeddings" \
 
 | 项 | 待确认内容 | 影响 |
 |---|---|---|
-| 对话模型 | 具体接入点 ID 与模型标识 | 配置的 `ARK_CHAT_MODEL` |
+| 对话模型 | 具体接入点 ID 与模型标识 | 配置的 `ARK_CHAT_MODEL`；2026-11-02 本机用 `deepseek-v4-1-flash-economy-261017` 自检通过，页面可直接改 |
 | 向量模型 | 具体接入点 ID、实际维度、单请求条数上限 | `ARK_EMBEDDING_MODEL`、`ARK_EMBEDDING_DIM`、RAGFlow 侧配置 |
 | RAGFlow 的模型设置 | 自定义 OpenAI 兼容提供商是否支持自定义接口地址与维度 | 第 6 节能否按表中填法配置 |
 | 路径拼接 | `base-url` 加 `/chat/completions` 是否与实际一致 | 是否需要 `endpoint-path` |

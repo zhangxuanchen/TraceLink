@@ -97,9 +97,11 @@ services:
     restart: on-failure
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2023-12-20T01-00-02Z
+    # 官方镜像 quay.io/minio/minio 在部分网络会被镜像站屏蔽，可用 MINIO_IMAGE /
+    # MINIO_COMMAND / MINIO_DATA_DIR 换成等价实现（例如 bitnami/minio，数据目录 /bitnami/minio/data）
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2023-12-20T01-00-02Z}
     container_name: ragflow-minio
-    command: server --console-address ":9001" /data
+    command: ${MINIO_COMMAND:-server --console-address ":9001" /data}
     ports:
       - ${MINIO_PORT}:9000
       - ${MINIO_CONSOLE_PORT}:9001
@@ -109,7 +111,7 @@ services:
       - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
       - TZ=${TIMEZONE}
     volumes:
-      - minio_data:/data
+      - minio_data:${MINIO_DATA_DIR:-/data}
     networks:
       - ragflow
     restart: on-failure

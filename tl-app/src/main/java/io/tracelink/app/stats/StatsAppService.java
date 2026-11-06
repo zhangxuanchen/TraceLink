@@ -11,6 +11,7 @@ import io.tracelink.domain.stat.model.TaskMetric;
 import io.tracelink.domain.stat.repository.TaskMetricRepository;
 import io.tracelink.domain.task.model.Task;
 import io.tracelink.domain.task.model.TaskStatus;
+import io.tracelink.domain.task.repository.TaskAssigneeRepository;
 import io.tracelink.domain.task.repository.TaskCheckinRepository;
 import io.tracelink.domain.task.repository.TaskRepository;
 import org.springframework.stereotype.Service;
@@ -26,7 +27,10 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * 统计应用服务：指标口径只在 {@link #kpis} 里定义一次，驾驶舱、趋势、部门对比、人员分析都复用同一份。
@@ -44,17 +48,20 @@ public class StatsAppService {
 
     private final TaskRepository taskRepository;
     private final TaskCheckinRepository checkinRepository;
+    private final TaskAssigneeRepository assigneeRepository;
     private final TaskMetricRepository metricRepository;
     private final EmployeeRepository employeeRepository;
     private final DeptRepository deptRepository;
 
     public StatsAppService(TaskRepository taskRepository,
                            TaskCheckinRepository checkinRepository,
+                           TaskAssigneeRepository assigneeRepository,
                            TaskMetricRepository metricRepository,
                            EmployeeRepository employeeRepository,
                            DeptRepository deptRepository) {
         this.taskRepository = taskRepository;
         this.checkinRepository = checkinRepository;
+        this.assigneeRepository = assigneeRepository;
         this.metricRepository = metricRepository;
         this.employeeRepository = employeeRepository;
         this.deptRepository = deptRepository;
@@ -62,16 +69,24 @@ public class StatsAppService {
 
     // ---------------------------------------------------------------- 驾驶舱
 
-    public StatsOverviewView overview(AuthUser actor, LocalDate from, LocalDate to, Long deptId) {
+    public StatsOverviewView overview(AuthUser actor, LocalDate from, LocalDate to, Long deptId, KpiFilter filter) {
         requireManager(actor);
-        return computeOverview(from, to, scopeDept(actor, deptId));
+        return computeOverview(from, to, scopeDept(actor, deptId), filter, actor);
     }
 
     /** 被导出模块复用：角色校验由调用方负责，口径与页面完全一致 */
     public StatsOverviewView computeOverview(LocalDate from, LocalDate to, Long deptId) {
+        return computeOverview(from, to, deptId, null, null);
+    }
+
+    private StatsOverviewView computeOverview(LocalDate from, LocalDate to, Long deptId,
+                                              KpiFilter filter, AuthUser actor) {
         LocalDate start = from == null ? toOrToday(to).minusDays(29) : from;
         LocalDate end = toOrToday(to);
         Snapshot snapshot = snapshot(start, end, deptId);
+        if (filter != null && filter.active()) {
+            snapshot = filtered(snapshot, filter, actor, end);
+        }
 
         List<KpiView> kpis = kpis(snapshot, start, end);
         List<TrendPoint> trend = trendPoints(snapshot, start, end);
@@ -85,6 +100,58 @@ public class StatsAppService {
 
         return new StatsOverviewView(start.format(DAY), end.format(DAY), "v1", kpis, trend, depts,
                 status, bins, top, recurrent, types, heatmap);
+    }
+
+    /** 部门与个人两个维度上的七项率；分组后各自重算，口径与顶部 KPI 卡完全一致 */
+    public StatsRatesView rates(AuthUser actor, LocalDate from, LocalDate to, Long deptId) {
+        requireOwner(actor);
+        LocalDate end = toOrToday(to);
+        LocalDate start = from == null ? end.minusDays(29) : from;
+        Snapshot base = snapshot(start, end, scopeDept(actor, deptId));
+        Map<Long, String> deptNames = deptNames();
+        Map<Long, Long> deptParents = deptParents();
+        Map<Long, String> employeeNames = employeeNames();
+        Map<Long, Employee> employees = employeeMap();
+
+        Map<Long, List<Task>> byDept = new LinkedHashMap<>();
+        for (Task task : base.tasks) {
+            if (task.deptId != null) {
+                byDept.computeIfAbsent(task.deptId, k -> new ArrayList<>()).add(task);
+            }
+        }
+        List<StatsRatesView.RateRow> depts = new ArrayList<>();
+        byDept.forEach((id, tasks) -> depts.add(new StatsRatesView.RateRow(id,
+                deptNames.getOrDefault(id, "部门" + id), null, deptParents.get(id),
+                tasks.size(), kpis(of(base, tasks), start, end))));
+        depts.sort(Comparator.comparing(StatsRatesView.RateRow::name));
+
+        Map<Long, List<Task>> byPerson = new LinkedHashMap<>();
+        for (Task task : base.tasks) {
+            Long key = task.primaryAssigneeId == null ? task.ownerId : task.primaryAssigneeId;
+            if (key != null) {
+                byPerson.computeIfAbsent(key, k -> new ArrayList<>()).add(task);
+            }
+        }
+        List<StatsRatesView.RateRow> persons = new ArrayList<>();
+        byPerson.forEach((id, tasks) -> {
+            Employee employee = employees.get(id);
+            persons.add(new StatsRatesView.RateRow(id,
+                    employeeNames.getOrDefault(id, "员工" + id),
+                    employee == null || employee.getDeptId() == null ? null : deptNames.get(employee.getDeptId()),
+                    null, tasks.size(), kpis(of(base, tasks), start, end)));
+        });
+        persons.sort(Comparator.comparingInt((StatsRatesView.RateRow row) -> row.tasks()).reversed());
+
+        return new StatsRatesView(start.format(DAY), end.format(DAY), depts, persons);
+    }
+
+    /** 从整体快照里切出一个部门或一个人的子快照，新增 / 完成 / 全量三个集合保持对应 */
+    private Snapshot of(Snapshot base, List<Task> tasks) {
+        Set<Long> ids = tasks.stream().map(task -> task.id).collect(Collectors.toSet());
+        return new Snapshot(
+                base.created.stream().filter(task -> ids.contains(task.id)).toList(),
+                base.done.stream().filter(task -> ids.contains(task.id)).toList(),
+                tasks);
     }
 
     // ---------------------------------------------------------------- 趋势
@@ -207,7 +274,7 @@ public class StatsAppService {
                 new KpiView("on_time_rate", "按时完成率", ratio(onTime, done), "%", "验收通过且实际完成不晚于计划的单数 ÷ 验收通过数"),
                 new KpiView("avg_hours", "平均完成时长", round(avgHours), "小时",
                         "验收时间与计划开始时间之差的小时均值（无计划开始时取创建时间）"),
-                new KpiView("overdue_rate", "逾期率", ratio(overdue, open.size()), "%", "期末逾期单数 ÷ 期末未完成单数"),
+                new KpiView("overdue_rate", "逾期率", ratio(overdue, snapshot.tasks.size()), "%", "期末逾期单数 ÷ 近90天全部工单（含已完成）"),
                 new KpiView("first_pass_rate", "一次通过率", ratio(firstPass, done), "%", "未被退回的单数 ÷ 验收通过数"),
                 new KpiView("evidence_rate", "结果留痕率", ratio(traced, done), "%", "存在结果类追踪记录的单数 ÷ 全部单数"),
                 new KpiView("recurrence_rate", "复发率", ratio(recurrent, created), "%", "带复发标记的新增单数 ÷ 新增单数"));
@@ -241,6 +308,63 @@ public class StatsAppService {
     }
 
     private record Snapshot(List<Task> created, List<Task> done, List<Task> tasks) {
+    }
+
+    /** 工单中心的筛选条直接作用在统计人口上：改了筛选，七个指标跟着变 */
+    private Snapshot filtered(Snapshot snapshot, KpiFilter filter, AuthUser actor, LocalDate end) {
+        Set<Long> mineIds = Set.of();
+        Long self = actor == null ? null : actor.employeeId();
+        if (filter.mine()) {
+            if (self == null) {
+                mineIds = Set.of();
+            } else {
+                mineIds = assigneeRepository.listByTaskIds(snapshot.tasks.stream().map(t -> t.id).toList())
+                        .stream().filter(a -> Objects.equals(a.employeeId, self))
+                        .map(a -> a.taskId).collect(Collectors.toSet());
+            }
+        }
+        Predicate<Task> predicate = filterPredicate(filter, self, mineIds, end);
+        return new Snapshot(snapshot.created.stream().filter(predicate).toList(),
+                snapshot.done.stream().filter(predicate).toList(),
+                snapshot.tasks.stream().filter(predicate).toList());
+    }
+
+    private Predicate<Task> filterPredicate(KpiFilter filter, Long self, Set<Long> mineIds, LocalDate end) {
+        String keyword = filter.keyword() == null ? null : filter.keyword().trim().toLowerCase();
+        boolean hasKeyword = keyword != null && !keyword.isEmpty();
+        return task -> {
+            if (hasKeyword) {
+                boolean hit = (task.taskNo != null && task.taskNo.toLowerCase().contains(keyword))
+                        || (task.title != null && task.title.toLowerCase().contains(keyword));
+                if (!hit) {
+                    return false;
+                }
+            }
+            if (filter.statuses() != null && !filter.statuses().isEmpty()
+                    && (task.status == null || !filter.statuses().contains(task.status.name()))) {
+                return false;
+            }
+            if (filter.types() != null && !filter.types().isEmpty()
+                    && (task.type == null || !filter.types().contains(task.type.name()))) {
+                return false;
+            }
+            if (filter.deptIds() != null && !filter.deptIds().isEmpty()
+                    && (task.deptId == null || !filter.deptIds().contains(task.deptId))) {
+                return false;
+            }
+            if (filter.overdue() && !overdue(task, end)) {
+                return false;
+            }
+            if (filter.blocked() && task.status != TaskStatus.BLOCKED) {
+                return false;
+            }
+            if (filter.mine() && !(Objects.equals(task.ownerId, self)
+                    || Objects.equals(task.primaryAssigneeId, self)
+                    || (task.id != null && mineIds.contains(task.id)))) {
+                return false;
+            }
+            return true;
+        };
     }
 
     private List<TrendPoint> trendPoints(Snapshot snapshot, LocalDate from, LocalDate to) {
@@ -556,6 +680,14 @@ public class StatsAppService {
             names.put(dept.getId(), dept.getName());
         }
         return names;
+    }
+
+    private Map<Long, Long> deptParents() {
+        Map<Long, Long> parents = new LinkedHashMap<>();
+        for (Dept dept : deptRepository.findAll()) {
+            parents.put(dept.getId(), dept.getParentId());
+        }
+        return parents;
     }
 
     private Map<Long, String> employeeNames() {

@@ -57,7 +57,11 @@ public class KbDocumentRepositoryImpl implements KbDocumentRepository {
             wrapper.eq("sync_status", status.name());
         }
         if (keyword != null && !keyword.isBlank()) {
-            wrapper.like("title", keyword.trim());
+            String like = "%" + keyword.trim() + "%";
+            // 标题直接匹配；正文落在切片表，按切片内容反查文档，搜索结果与列表语义保持一致
+            wrapper.and(w -> w.like("title", keyword.trim())
+                    .or()
+                    .apply("EXISTS (SELECT 1 FROM kb_chunk c WHERE c.doc_id = kb_document.id AND c.superseded = 0 AND c.content LIKE {0})", like));
         }
         return mapper.selectList(wrapper).stream().map(KbDocumentRepositoryImpl::toModel).toList();
     }

@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h2 class="page-title">人员管理</h2>
-        <p class="page-sub">花名册由这里维护，工单的主责人、负责人只能从这里选</p>
+        <p class="page-sub">花名册由这里维护，工单的主责人、负责人只能从这里选；账号与角色也在这里改，四种角色决定菜单与可见数据</p>
       </div>
       <button class="btn btn-primary" @click="openCreate">新增人员</button>
     </div>
@@ -43,6 +43,7 @@
             <th>职位</th>
             <th>直属上级</th>
             <th>入职日期</th>
+            <th v-if="canSeeRoles" style="min-width: 268px">角色</th>
             <th>状态</th>
             <th style="width: 80px">操作</th>
           </tr>
@@ -50,11 +51,35 @@
         <tbody>
           <tr v-for="row in page.records" :key="row.id">
             <td class="num">{{ row.empNo }}</td>
-            <td>{{ row.name }}</td>
+            <td>
+              <div>{{ row.name }}</div>
+              <div class="muted small">{{ accountOf(row.id)?.username || '未建账号' }}</div>
+            </td>
             <td>{{ row.deptName || '—' }}</td>
             <td>{{ row.positionName || '—' }}</td>
             <td>{{ row.managerName || '—' }}</td>
             <td class="num">{{ row.joinDate || '—' }}</td>
+            <td v-if="canSeeRoles" class="role-cell">
+              <template v-if="isAdmin">
+                <label v-for="role in roles" :key="role.code" class="role-check"
+                       :title="role.dataScopeLabel">
+                  <input type="checkbox" :value="role.code"
+                         :checked="roleDraft[row.id]?.includes(role.code)"
+                         :disabled="savingRoleId === row.id || row.id === selfId"
+                         @change="toggleRole(row.id, role.code, $event.target.checked)" />
+                  <span>{{ role.name }}</span>
+                </label>
+                <button v-if="roleDirty(row.id)" class="btn-link role-save"
+                        :disabled="savingRoleId === row.id" @click="saveRoles(row.id)">
+                  {{ savingRoleId === row.id ? '保存中…' : '保存' }}
+                </button>
+                <span v-else-if="row.id === selfId" class="muted small">本人角色由另一位管理员改</span>
+              </template>
+              <template v-else>
+                <span v-for="code in roleCodesOf(row.id)" :key="code" class="tag role-tag">{{ roleName(code) }}</span>
+                <span v-if="!roleCodesOf(row.id).length" class="muted small">未分配</span>
+              </template>
+            </td>
             <td>
               <span class="tag" :class="statusClass(row.status)">{{ statusLabel(row.status) }}</span>
             </td>
@@ -64,6 +89,7 @@
           </tr>
         </tbody>
       </table>
+      <div v-if="roleError" class="form-error role-error">{{ roleError }}</div>
     </div>
 
     <div class="pager" v-if="page.total > page.pageSize">
@@ -147,6 +173,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import BaseModal from '../components/BaseModal.vue'
 import { deptApi, employeeApi, positionApi } from '../api/org.js'
+import { settingsApi } from '../api/admin.js'
+import { USER_KEY } from '../api/http.js'
 
 const loading = ref(true)
 const error = ref('')
@@ -154,6 +182,24 @@ const depts = ref([])
 const employees = ref([])
 const positions = ref([])
 const page = ref({ total: 0, pageNo: 1, pageSize: 20, records: [] })
+
+/** 角色与账号表：角色改在人员这一页，账号只读展示在姓名下方 */
+const roles = ref([])
+const accounts = ref([])
+const roleDraft = reactive({})
+const savingRoleId = ref(null)
+const roleError = ref('')
+
+const user = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(USER_KEY) || '{}')
+  } catch {
+    return {}
+  }
+})()
+const isAdmin = computed(() => (user.roles || []).includes('SYS_ADMIN'))
+const canSeeRoles = computed(() => (user.roles || []).some((r) => ['SYS_ADMIN', 'MANAGER'].includes(r)))
+const selfId = user.employeeId || null
 
 const filters = reactive({ keyword: '', deptId: null, status: null })
 const dialog = reactive({ open: false, id: null, saving: false, error: '', form: emptyForm() })
@@ -195,6 +241,9 @@ async function load() {
       depts.value = await deptApi.tree()
       employees.value = await employeeApi.options()
     }
+    if (canSeeRoles.value && !roles.value.length) {
+      await loadAccounts()
+    }
     const params = {
       keyword: filters.keyword || undefined,
       deptId: filters.deptId || undefined,
@@ -207,6 +256,53 @@ async function load() {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAccounts() {
+  const [roleList, accountList] = await Promise.all([settingsApi.roles(), settingsApi.accounts()])
+  roles.value = roleList
+  accounts.value = accountList
+  for (const account of accountList) {
+    roleDraft[account.employeeId] = [...(account.roleCodes || [])]
+  }
+}
+
+function accountOf(employeeId) {
+  return accounts.value.find((item) => item.employeeId === employeeId)
+}
+
+function roleName(code) {
+  return roles.value.find((role) => role.code === code)?.name || code
+}
+
+function roleCodesOf(employeeId) {
+  return accountOf(employeeId)?.roleCodes || []
+}
+
+function roleDirty(employeeId) {
+  const current = roleCodesOf(employeeId)
+  const draft = roleDraft[employeeId] || []
+  return current.length !== draft.length || draft.some((code) => !current.includes(code))
+}
+
+function toggleRole(employeeId, code, checked) {
+  const list = roleDraft[employeeId] || []
+  roleDraft[employeeId] = checked ? [...list, code] : list.filter((item) => item !== code)
+}
+
+async function saveRoles(employeeId) {
+  if (savingRoleId.value) return
+  savingRoleId.value = employeeId
+  roleError.value = ''
+  try {
+    accounts.value = await settingsApi.updateAccountRoles(employeeId, roleDraft[employeeId] || [])
+    roleDraft[employeeId] = [...(accountOf(employeeId)?.roleCodes || [])]
+  } catch (e) {
+    roleError.value = e.message
+    roleDraft[employeeId] = [...roleCodesOf(employeeId)]
+  } finally {
+    savingRoleId.value = null
   }
 }
 
@@ -300,6 +396,46 @@ onMounted(load)
 .count {
   color: var(--txt-3);
   font-size: 13px;
+}
+
+.muted {
+  color: var(--txt-3);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.role-cell {
+  line-height: 2;
+}
+
+.role-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+  color: var(--txt-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.role-check input {
+  height: auto;
+  margin: 0;
+}
+
+.role-tag {
+  margin-right: 6px;
+}
+
+.role-save {
+  margin-left: 4px;
+  font-size: 12px;
+}
+
+.role-error {
+  margin: 12px 16px 0;
 }
 
 .pager {

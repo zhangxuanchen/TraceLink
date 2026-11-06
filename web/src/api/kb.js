@@ -19,12 +19,6 @@ export const kbApi = {
   },
   sync: (id) => request({ url: `/kb/documents/${id}/sync`, method: 'get' }),
   reparse: (id) => request({ url: `/kb/documents/${id}/sync`, method: 'post', timeout: 30000 }),
-  history: (deptId, limit = 100) => request({
-    url: '/kb/documents/history',
-    method: 'post',
-    params: { limit, ...(deptId ? { deptId } : {}) },
-    timeout: 180000
-  }),
   search: (data) => request({ url: '/kb/search', method: 'post', data, timeout: 30000 }),
   chunk: (id) => request({ url: `/kb/chunks/${id}`, method: 'get' })
 }

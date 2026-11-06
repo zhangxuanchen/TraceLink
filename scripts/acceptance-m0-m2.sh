@@ -254,7 +254,7 @@ expect 'TC-M1-16 时间线包含退回记录' 'true' "$(jexpr "any('验收退回
 section 'M2 导入导出与统计（TC-M2-08 ~ M2-12）'
 
 call GET "/stats/overview?from=$RANGE_FROM&to=$RANGE_TO" "$T_ADMIN" >/dev/null
-expect_code 'TC-M2-12 驾驶舱接口成功' 0
+expect_code 'TC-M2-12 口径指标接口成功' 0
 rate=$(jexpr "next((k['value'] for k in d['kpis'] if k['code']=='completion_rate'), None)")
 if python3 -c "import sys;sys.exit(0 if 0 <= float('$rate') <= 100 else 1)"; then
   pass "TC-M2-12 完成率在 0–100（实际 ${rate}）"
@@ -273,7 +273,7 @@ expect_code 'TC-M2-12 人员指标接口成功' 0
 expect 'TC-M2-12 雷达六维不超过 100' 'true' "$(jexpr "all(x['value'] <= 100 for x in d['radar'])")"
 
 call GET "/stats/overview?from=$RANGE_FROM&to=$RANGE_TO" "$T_EXEC" >/dev/null
-expect_code 'TC-X-02 执行者读驾驶舱被拦 TL-4031' 'TL-4031'
+expect_code 'TC-X-02 执行者读口径指标被拦 TL-4031' 'TL-4031'
 
 LEDGER_ID=$(
   call POST '/exports' "$T_ADMIN" "{\"template\":\"LEDGER\",\"from\":\"$RANGE_FROM\",\"to\":\"$RANGE_TO\"}" >/dev/null

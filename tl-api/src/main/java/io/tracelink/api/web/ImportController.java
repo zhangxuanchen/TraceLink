@@ -9,8 +9,10 @@ import io.tracelink.app.importing.ImportConfirmResult;
 import io.tracelink.app.importing.ImportPreviewView;
 import io.tracelink.app.importing.ImportRowView;
 import io.tracelink.app.importing.RowEditCommand;
+import io.tracelink.app.job.JobAppService;
 import io.tracelink.common.api.ApiResult;
 import io.tracelink.common.error.BizException;
+import io.tracelink.domain.job.model.JobType;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +33,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 /** IMP-1 到 IMP-4 与日报页查询（DESIGN 5.1） */
 @RestController
@@ -38,9 +41,11 @@ import java.util.List;
 public class ImportController {
 
     private final ImportAppService importAppService;
+    private final JobAppService jobAppService;
 
-    public ImportController(ImportAppService importAppService) {
+    public ImportController(ImportAppService importAppService, JobAppService jobAppService) {
         this.importAppService = importAppService;
+        this.jobAppService = jobAppService;
     }
 
     @PostMapping("/imports")
@@ -83,7 +88,9 @@ public class ImportController {
 
     @PostMapping("/imports/{id}/confirm")
     public ApiResult<ImportConfirmResult> confirm(@PathVariable Long id) {
-        return ApiResult.ok(importAppService.confirm(AuthContext.current(), id));
+        return ApiResult.ok(jobAppService.runRecorded(JobType.PARSE_IMPORT, Map.of("batchId", id),
+                AuthContext.current(), "导入确认 #" + id,
+                () -> importAppService.confirm(AuthContext.current(), id)));
     }
 
     @GetMapping("/imports/{id}/report.xlsx")

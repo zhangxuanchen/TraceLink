@@ -15,6 +15,9 @@ public interface ChatAskSink {
 
     void hint(ChatHint hint);
 
+    /** 信息不明确时的澄清建议：最多 3 条，每条一个具体澄清方向 */
+    void clarify(List<String> questions);
+
     void done(ChatDone done);
 
     void error(String code, String message);

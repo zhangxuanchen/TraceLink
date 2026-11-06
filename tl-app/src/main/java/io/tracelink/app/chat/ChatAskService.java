@@ -14,7 +14,6 @@ import io.tracelink.domain.chat.model.ChatSession;
 import io.tracelink.domain.chat.model.ChatSessionStatus;
 import io.tracelink.domain.chat.repository.ChatMessageRepository;
 import org.springframework.beans.factory.DisposableBean;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -26,7 +25,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 会话问答（CHT-3）。工具调用与检索都在服务端完成，事件顺序固定：
+ * 工单助手问答（CHT-3）：只围绕工单数据回答（进度、期限、阻碍、验收、口径统计与相关制度）。
+ * 工具调用与检索都在服务端完成，事件顺序固定：
  * retrieval → tool_call… → delta… → citations → hint → done；模型不可用或失败时降级为规则回答，
  * 并在 done 事件里标 degraded，不阻塞其它请求（DESIGN 4.8、4.9）。
  */
@@ -40,17 +40,33 @@ public class ChatAskService implements DisposableBean {
     private static final int MAX_CITATIONS = 5;
     private static final int CITATION_EXCERPT = 160;
     private static final int RULE_ANSWER_MAX = 900;
-    private static final String PROMPT_VER = "m5-chat-1";
+    private static final String PROMPT_VER = "m5-chat-5";
     private static final String MODEL_RULE = "RULE";
 
     private static final String SYSTEM_PROMPT = """
-            你是企业执行追踪系统的会话助手。只能依据下面给出的工具结果与知识片段回答，不得编造数字、人名或文档内容。
+            你是企业执行追踪系统的工单助手。你的职责只有一件事：依据下面给出的工单、统计、
+            部门组织三类工具结果与知识片段，回答与工单相关的问题——进度、期限、逾期、阻碍、
+            承办与主责、完成条件（缺口）、验收与退回、口径统计、组织分工与人员负载，
+            以及这些流程对应的制度依据。不得编造数字、人名或文档内容。
             要求：
-            1. 先给结论，再给依据，用中文，控制在 600 字以内；
-            2. 引用知识片段时用方括号编号标注来源，例如 [1]；
-            3. 工具结果只说明事实，不做推测；数据不足时直接说明不足；
-            4. 提问像是一件新事项时，只提示可以去工单中心建单，不要代填字段，也不要给出建单草稿；
-            5. 不输出与问题无关的建议。
+            1. 只回答与工单相关的问题；与工单无关的闲聊、通用写作或外部资讯，用一句话说明
+               「我只处理工单数据，可以问工单进度、逾期、阻碍、验收或口径统计」，不要展开；
+            2. 先给结论，再给依据，用中文，控制在 600 字以内；
+            3. 必须做跨源综合：把工单事实、口径统计、知识依据与部门组织（编制、在职、负责人、
+               上下级、在办负载）放在一起看，指出主要成因属于「组织与人手」「流程与制度」还是
+               「执行时效」，不要只罗列各工具的数字；
+            4. 某一维没有数据时，明确说这一维缺失，不要用其它维度推测补位；
+            5. 引用知识片段时用方括号编号标注来源，例如 [1]；
+            6. 工具结果只说明事实，不做推测；
+            7. 提问像是一件新事项时，只提示可以去工单中心建单，不要代填字段，也不要给出建单草稿；
+            8. 不输出与工单无关的建议；
+            9. 部门、工单类型与时间范围由系统从问题里自动识别并收紧，能识别的不要反问；
+               识别不了或问题本身有歧义时（例如「逾期最多」是逾期数量还是逾期率、
+               「生产部」是哪个部门、「最近」是多长时间），才需要反问；
+            10. 如果需要反问，在回答末尾另起一段，标题为【反问建议】，下面用列表输出 3 条
+                具体的澄清方向（每条以 `- ` 开头），每条都是一个具体可填的问句，不要泛泛而问；
+                例如不要写「请明确时间范围」，要写「要查最近 30 天、本月还是本周的数据？」；
+            11. 如果问题本身已经明确（部门、时间、口径都清楚），不要输出【反问建议】段。
             """;
 
     private final ChatAppService chatAppService;
@@ -58,7 +74,6 @@ public class ChatAskService implements DisposableBean {
     private final KbAppService kbAppService;
     private final ChatMessageRepository messageRepository;
     private final ChatPort chatPort;
-    private final String modelName;
     private final ObjectMapper mapper = new ObjectMapper();
     private final ExecutorService askExecutor;
     private final Map<String, Replay> replayCache = Collections.synchronizedMap(
@@ -73,14 +88,12 @@ public class ChatAskService implements DisposableBean {
                           ChatToolService toolService,
                           KbAppService kbAppService,
                           ChatMessageRepository messageRepository,
-                          ChatPort chatPort,
-                          @Value("${tracelink.ai.ark.chat.model:}") String modelName) {
+                          ChatPort chatPort) {
         this.chatAppService = chatAppService;
         this.toolService = toolService;
         this.kbAppService = kbAppService;
         this.messageRepository = messageRepository;
         this.chatPort = chatPort;
-        this.modelName = modelName == null ? "" : modelName.trim();
         this.askExecutor = Executors.newFixedThreadPool(2, runnable -> {
             Thread thread = new Thread(runnable, "chat-ask");
             thread.setDaemon(true);
@@ -146,8 +159,10 @@ public class ChatAskService implements DisposableBean {
             }
             String question = validate(command);
             List<ChatToolResult> tools = command.toolsAllowed() ? toolService.run(actor, command) : List.of();
+            // 范围不在页面上手选：问题里提到哪个部门就收到哪个部门，没提到时按调用人的可见范围检索
+            Long searchDept = command.deptId() != null ? command.deptId() : toolService.deptInQuestion(question);
             KbSearchView retrieval = kbAppService.search(actor, searchQuestion(question), null,
-                    command.deptId(), MAX_HITS);
+                    searchDept, MAX_HITS);
             List<KbCitation> citations = citations(retrieval);
             ChatRetrieval retrievalEvent = new ChatRetrieval(retrieval.retriever(), retrieval.degraded(),
                     retrieval.total(), chunkIds(retrieval), toolNames(tools, command.toolsAllowed()));
@@ -164,8 +179,8 @@ public class ChatAskService implements DisposableBean {
             boolean degraded = false;
             String model = MODEL_RULE;
             if (retrieval.hits().isEmpty() && tools.stream().noneMatch(t -> t.resultCount() > 0)) {
-                answer = "没有找到与「" + shorten(question, 60) + "」相关的知识与工单。"
-                        + "可以换个说法再问，或先补充知识、就这件事建单追踪。";
+                answer = "没有找到与「" + shorten(question, 60) + "」相关的工单或制度片段。"
+                        + "我只处理工单数据，可以问工单进度、逾期、阻碍、验收或口径统计。";
                 sink.delta(answer);
             } else if (!chatPort.available()) {
                 degraded = true;
@@ -180,11 +195,30 @@ public class ChatAskService implements DisposableBean {
                                 sink.delta(delta);
                             });
                     answer = buffer.toString();
-                    model = modelName.isEmpty() ? "ARK" : modelName;
+                    String currentModel = chatPort.modelName();
+                    model = currentModel == null || currentModel.isBlank() ? "ARK" : currentModel;
                 } catch (RuntimeException e) {
                     degraded = true;
                     answer = ruleAnswer(question, retrieval, tools, true);
                     sink.delta((buffer.isEmpty() ? "" : "\n\n") + answer);
+                }
+            }
+
+            // 解析反问建议段：从完整 answer 里剥离出来存到 ChatClarify，
+            // chatMessage.content 只保留正文不含【反问建议】段
+            List<String> clarifyQuestions = new ArrayList<>();
+            String cleanAnswer = answer;
+            if (answer != null && answer.contains("【反问建议】")) {
+                int idx = answer.indexOf("【反问建议】");
+                cleanAnswer = answer.substring(0, idx).trim();
+                String block = answer.substring(idx + "【反问建议】".length());
+                for (String line : block.split("\n")) {
+                    String trimmed = line.trim();
+                    if (trimmed.startsWith("- ") && trimmed.length() > 2) {
+                        String q = trimmed.substring(2).trim();
+                        if (!q.isBlank()) clarifyQuestions.add(q);
+                        if (clarifyQuestions.size() >= 3) break;
+                    }
                 }
             }
 
@@ -193,26 +227,29 @@ public class ChatAskService implements DisposableBean {
             if (hint != null) {
                 sink.hint(hint);
             }
+            if (!clarifyQuestions.isEmpty()) {
+                sink.clarify(clarifyQuestions);
+            }
 
             int latency = (int) (System.currentTimeMillis() - start);
             ChatMessage assistant = new ChatMessage();
             assistant.sessionId = session.id;
             assistant.role = ChatRole.ASSISTANT;
-            assistant.content = answer;
+            assistant.content = cleanAnswer;
             assistant.citations = json(citations);
             assistant.toolCalls = json(toolEvents(tools, knowledge, command.toolsAllowed()));
             assistant.modelName = model;
             assistant.promptVer = PROMPT_VER;
             assistant.tokenIn = estimateTokens(question);
-            assistant.tokenOut = estimateTokens(answer);
+            assistant.tokenOut = estimateTokens(cleanAnswer);
             assistant.latencyMs = latency;
             messageRepository.insert(assistant);
             chatAppService.touch(session, null, session.msgCountValue() + 1);
 
-            ChatDone done = new ChatDone(answer.length(), degraded, model, latency, PROMPT_VER);
+            ChatDone done = new ChatDone(cleanAnswer.length(), degraded, model, latency, PROMPT_VER);
             if (key != null && !key.isBlank()) {
                 replayCache.put(key, new Replay(session.id, question, retrievalEvent, citations,
-                        toolEvents(tools, knowledge, command.toolsAllowed()), answer, hint, done));
+                        toolEvents(tools, knowledge, command.toolsAllowed()), cleanAnswer, hint, done));
             }
             sink.done(done);
         } catch (BizException e) {
@@ -284,7 +321,7 @@ public class ChatAskService implements DisposableBean {
         if (taskHit) {
             return null;
         }
-        return new ChatHint("这看起来是一件新事项。会话不代填建单字段，请到工单中心新建，负责人与主责按实际填写。",
+        return new ChatHint("这看起来是一件新事项。工单助手不代填建单字段，请到工单中心新建，负责人与主责按实际填写。",
                 "#/tasks", "CREATE_TASK");
     }
 

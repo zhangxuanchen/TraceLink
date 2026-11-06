@@ -63,6 +63,12 @@ public class ChatMessageRepositoryImpl implements ChatMessageRepository {
         return rows.isEmpty() ? null : toModel(rows.get(0));
     }
 
+    @Override
+    public int deleteBySession(Long sessionId) {
+        return mapper.delete(new QueryWrapper<ChatMessageEntity>()
+                .eq("session_id", sessionId));
+    }
+
     public static ChatMessage toModel(ChatMessageEntity e) {
         ChatMessage m = new ChatMessage();
         m.id = e.id;

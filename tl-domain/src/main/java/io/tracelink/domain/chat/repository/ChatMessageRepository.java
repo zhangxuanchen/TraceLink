@@ -12,4 +12,7 @@ public interface ChatMessageRepository {
     List<ChatMessage> listBySession(Long sessionId, int limit);
 
     ChatMessage findBySessionAndContent(Long sessionId, String role, String content);
+
+    /** 清空一会话全部消息；返回删除条数，供审计与页面提示 */
+    int deleteBySession(Long sessionId);
 }

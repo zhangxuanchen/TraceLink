@@ -2,12 +2,7 @@
   <section>
     <div class="page-head">
       <div>
-        <h2 class="page-title">会话助手</h2>
-        <p class="page-sub">只读查看工单、统计、人员与知识；回答带引用与工具调用记录，不代填建单字段</p>
-      </div>
-      <div class="head-actions">
-        <button class="btn" :disabled="creating" @click="createSession">{{ creating ? '创建中…' : '新建会话' }}</button>
-        <button class="btn" :disabled="loadingSessions" @click="loadSessions">刷新</button>
+        <h2 class="page-title">工单助手</h2>
       </div>
     </div>
 
@@ -19,48 +14,17 @@
     </div>
 
     <div class="layout">
-      <aside class="card side">
-        <div class="side-head">
-          <h3>我的会话</h3>
-          <span class="muted">{{ sessions.length }}</span>
-        </div>
-        <div v-if="!sessions.length" class="empty side-empty">还没有会话，点右上角「新建会话」开始</div>
-        <div v-for="s in sessions" :key="s.id" class="session" :class="{ active: s.id === activeId }"
-             @click="selectSession(s)">
-          <div class="session-main">
-            <div class="session-title">{{ s.title }}</div>
-            <div class="session-meta">
-              <span class="num">{{ fmtTime(s.lastMsgAt || s.createdAt) }}</span>
-              <span>{{ s.msgCount || 0 }} 条</span>
-              <span class="tag" :class="s.status === 'ARCHIVED' ? 'tag-warn' : ''">{{ s.statusLabel }}</span>
-            </div>
-          </div>
-          <button v-if="s.status !== 'ARCHIVED'" class="btn-link session-op"
-                  @click.stop="archiveSession(s)">归档</button>
-        </div>
-      </aside>
-
       <div class="card chat">
         <div v-if="!activeSession" class="empty chat-empty">
-          <p class="empty-title">选一个会话，或直接新建</p>
-          <p class="muted">可以问工单进度、部门指标、人员负载与制度流程；也可以先试试下面的问题。</p>
-          <div class="samples">
-            <button v-for="sample in CHAT_SAMPLES" :key="sample" class="sample" @click="askSample(sample)">
-              {{ sample }}
-            </button>
-          </div>
+          <p class="empty-title">{{ creating || loadingSessions ? '正在准备会话…' : '会话暂不可用' }}</p>
+          <p class="muted">系统会自动保持一条会话历史，直接提问即可。</p>
         </div>
 
         <template v-else>
           <div class="chat-head">
-            <div>
-              <div class="chat-title">{{ activeSession.title }}</div>
-              <div class="muted small">
-                {{ activeSession.scopeTypeLabel }} · {{ activeSession.statusLabel }} · {{ activeSession.msgCount || 0 }} 条消息
-              </div>
-            </div>
-            <button v-if="activeSession.status !== 'ARCHIVED'" class="btn"
-                    @click="archiveSession(activeSession)">归档会话</button>
+            <div class="chat-title">{{ activeSession.title }}</div>
+            <button class="btn btn-ghost" :disabled="live.running || messages.length === 0"
+                    @click="onClear">清理上下文</button>
           </div>
 
           <div ref="scrollEl" class="messages">
@@ -137,6 +101,16 @@
                   <span>{{ live.hint.text }}</span>
                   <router-link v-if="live.hint.url" :to="hintRoute(live.hint.url)" class="btn btn-link">去工单中心</router-link>
                 </div>
+                <div v-if="live.clarify.length" class="clarify-suggestions">
+                  <span class="clarify-label">请选择澄清方向：</span>
+                  <button
+                    v-for="(q, i) in live.clarify"
+                    :key="i"
+                    class="clarify-btn"
+                    :title="'点击填入，也可直接修改'"
+                    @click="fillClarify(q)"
+                  >{{ q }}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -144,21 +118,13 @@
           <div class="composer">
             <textarea v-model="question" rows="2" :disabled="!canSend"
                       :placeholder="composerPlaceholder"
-                      @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send"></textarea>
+                      @keydown="onComposerKeydown"></textarea>
             <div class="composer-bar">
-              <select v-model="scopeDept" :disabled="!canSend" style="width: 140px">
-                <option :value="null">默认本部门</option>
-                <option v-for="d in deptOptions" :key="d.id" :value="d.id">{{ d.name }}</option>
-              </select>
-              <select v-model="scopeType" :disabled="!canSend" style="width: 130px">
-                <option :value="null">全部类型</option>
-                <option v-for="t in TASK_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
-              </select>
               <label class="check">
                 <input v-model="allowTools" type="checkbox" :disabled="!canSend" />
                 允许查询工单与统计
               </label>
-              <span class="muted small">Ctrl/⌘ + Enter 发送，问题不超过 1000 字</span>
+              <span class="muted small">Enter 发送，Shift + Enter 换行，问题不超过 1000 字</span>
               <span class="spacer"></span>
               <button v-if="live.running" class="btn" @click="stopAsk">停止</button>
               <button class="btn btn-primary" :disabled="!canSend || !question.trim()" @click="send">
@@ -190,16 +156,13 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { askStream, chatApi, CHAT_SAMPLES, QUESTION_MAX, newIdempotencyKey } from '../api/chat.js'
+import { marked } from 'marked'
+import { askStream, chatApi, QUESTION_MAX, newIdempotencyKey } from '../api/chat.js'
 import { kbApi } from '../api/kb.js'
-import { deptApi } from '../api/org.js'
-import { TASK_TYPES } from '../api/taskOptions.js'
 import BaseModal from '../components/BaseModal.vue'
 
-const sessions = ref([])
-const activeId = ref(null)
+const activeSession = ref(null)
 const messages = ref([])
-const deptOptions = ref([])
 const loadingSessions = ref(false)
 const loadingMessages = ref(false)
 const creating = ref(false)
@@ -207,17 +170,17 @@ const loadError = ref('')
 const notice = ref('')
 
 const question = ref('')
-const scopeDept = ref(null)
-const scopeType = ref(null)
 const allowTools = ref(true)
 
 const live = reactive({
+  active: false,
   running: false,
   answer: '',
   retrieval: null,
   tools: [],
   citations: [],
   hint: null,
+  clarify: [],
   done: null
 })
 
@@ -229,26 +192,12 @@ const chunkView = ref(null)
 const scrollEl = ref(null)
 let askController = null
 
-const activeSession = computed(() => sessions.value.find((s) => s.id === activeId.value) || null)
-const archived = computed(() => activeSession.value?.status === 'ARCHIVED')
-const canSend = computed(() => Boolean(activeSession.value) && !archived.value && !live.running)
+const canSend = computed(() => Boolean(activeSession.value) && !live.running)
 
-const composerPlaceholder = computed(() => {
-  if (archived.value) return '会话已归档，不能再提问；请新建会话'
-  return '例如：生产部这周还有几张单没验收？（Ctrl/⌘ + Enter 发送）'
-})
+const composerPlaceholder = computed(() => '例如：生产部这周还有几张单没验收？（Enter 发送，Shift + Enter 换行）')
 
 function fmtTime(value) {
   return value ? String(value).replace('T', ' ').slice(0, 16) : '—'
-}
-
-function flatten(nodes, level = 1) {
-  const list = []
-  for (const node of nodes || []) {
-    list.push({ id: node.id, name: `${'　'.repeat(level - 1)}${node.name}` })
-    list.push(...flatten(node.children, level + 1))
-  }
-  return list
 }
 
 function modelLabel(message) {
@@ -284,19 +233,26 @@ function hintRoute(url) {
   return String(url || '').replace(/^#/, '') || '/tasks'
 }
 
-function escapeHtml(text) {
-  return String(text || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+/** 点击澄清建议按钮 → 填入 composer，让用户可以再改或直接发 */
+function fillClarify(q) {
+  question.value = String(q || '')
+  // 填完后自动聚焦到输入框末尾
+  const ta = document.querySelector('.composer textarea')
+  if (ta) {
+    ta.focus()
+    ta.setSelectionRange(ta.value.length, ta.value.length)
+  }
+  // 填完清空建议，避免用户误以为点了就会自动发
+  live.clarify = []
 }
 
-/** 回答是纯文本，只做加粗与引用编号高亮，避免把模型输出当 HTML 执行 */
+/** Markdown 渲染：用 marked 做 GFM 解析（支持表格/任务列表/嵌套/自动链接/删除线），
+ *  引用编号 [1] 保留自定义高亮样式。marked 内部默认 escape HTML，不信任模型输出里的标签。 */
 function renderText(text) {
-  return escapeHtml(text)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[(\d{1,2})\]/g, '<span class="cite-ref">[$1]</span>')
+  if (!text) return ''
+  marked.setOptions({ gfm: true, breaks: true, headerIds: false })
+  const html = marked.parse(String(text))
+  return html.replace(/\[(\d{1,2})\]/g, '<span class="cite-ref">[$1]</span>')
 }
 
 function scrollToBottom() {
@@ -308,32 +264,30 @@ function scrollToBottom() {
 }
 
 watch(messages, scrollToBottom, { deep: true })
-watch(() => [live.answer, live.tools.length], scrollToBottom)
+watch(() => [live.active, live.answer, live.tools.length], scrollToBottom)
 
-async function loadDepts() {
-  try {
-    deptOptions.value = flatten(await deptApi.tree())
-  } catch {
-    deptOptions.value = []
-  }
-}
-
-async function loadSessions() {
+/** 工单助手只保留一条会话：优先复用最近未归档的，没有就新建一条并一直续用 */
+async function ensureSession() {
   loadingSessions.value = true
+  creating.value = true
   loadError.value = ''
   try {
-    sessions.value = await chatApi.sessions()
-    if (activeId.value && !sessions.value.some((s) => s.id === activeId.value)) {
-      activeId.value = null
-      messages.value = []
-    }
-    if (!activeId.value && sessions.value.length) {
-      await selectSession(sessions.value[0])
-    }
+    const list = await chatApi.sessions()
+    const usable = (list || []).find((item) => item.status !== 'ARCHIVED')
+    const session = usable || await chatApi.create({
+      title: null,
+      scopeType: 'DEPT',
+      scopeId: null
+    })
+    await loadMessages(session.id)
+    activeSession.value = session
+    scrollToBottom()
   } catch (e) {
     loadError.value = e.message
+    activeSession.value = null
   } finally {
     loadingSessions.value = false
+    creating.value = false
   }
 }
 
@@ -349,69 +303,19 @@ async function loadMessages(id) {
   }
 }
 
-async function createSession(silent = false) {
-  creating.value = true
-  loadError.value = ''
-  try {
-    const session = await chatApi.create({
-      title: null,
-      scopeType: 'DEPT',
-      scopeId: scopeDept.value || null
-    })
-    sessions.value = [session, ...sessions.value.filter((s) => s.id !== session.id)]
-    activeId.value = session.id
-    messages.value = []
-    if (!silent) {
-      notice.value = ''
-    }
-    return session
-  } catch (e) {
-    if (!silent) {
-      loadError.value = e.message
-    }
-    return null
-  } finally {
-    creating.value = false
-  }
-}
-
-async function selectSession(session) {
-  if (live.running) {
-    stopAsk()
-  }
-  activeId.value = session.id
-  live.answer = ''
-  live.tools = []
-  live.citations = []
-  live.retrieval = null
-  live.hint = null
-  notice.value = ''
-  await loadMessages(session.id)
-  scrollToBottom()
-}
-
-async function archiveSession(session) {
-  try {
-    const updated = await chatApi.archive(session.id)
-    const index = sessions.value.findIndex((s) => s.id === session.id)
-    if (index >= 0) {
-      sessions.value[index] = updated
-    }
-    if (activeId.value === session.id) {
-      messages.value = await chatApi.messages(session.id)
-    }
-    notice.value = '会话已归档，历史仍可回看，但不能再提问'
-  } catch (e) {
-    loadError.value = e.message
-  }
-}
-
 async function askSample(sample) {
   question.value = sample
   if (!activeSession.value) {
-    await createSession(true)
+    await ensureSession()
   }
   await send()
+}
+
+/** Enter 发送，Shift + Enter 换行；输入法组合中的回车不触发发送 */
+function onComposerKeydown(event) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  send()
 }
 
 async function send() {
@@ -423,7 +327,7 @@ async function send() {
     return
   }
   notice.value = ''
-  const sessionId = activeId.value
+  const sessionId = activeSession.value.id
   const key = newIdempotencyKey()
 
   messages.value.push({
@@ -437,12 +341,14 @@ async function send() {
   })
   question.value = ''
   Object.assign(live, {
+    active: true,
     running: true,
     answer: '',
     retrieval: null,
     tools: [],
     citations: [],
     hint: null,
+    clarify: [],
     done: null
   })
   scrollToBottom()
@@ -451,10 +357,6 @@ async function send() {
   try {
     await askStream(sessionId, {
       question: text,
-      scope: {
-        deptId: scopeDept.value || null,
-        taskTypes: scopeType.value ? [scopeType.value] : null
-      },
       allowTools: allowTools.value
     }, {
       retrieval: (data) => {
@@ -471,6 +373,9 @@ async function send() {
       },
       hint: (data) => {
         live.hint = data
+      },
+      clarify: (questions) => {
+        live.clarify = questions || []
       },
       done: (data) => {
         live.done = data
@@ -490,24 +395,24 @@ async function send() {
   }
 }
 
-/** 回答落库后重载消息与会话列表，页面重开不需要重跑模型也能还原引用与工具记录 */
+/** 回答落库后重载消息与会话信息，页面重开不需要重跑模型也能还原引用与工具记录 */
 async function refreshAfterAsk(sessionId) {
-  if (activeId.value === sessionId) {
+  if (activeSession.value?.id === sessionId) {
     await loadMessages(sessionId)
   }
   live.answer = ''
+  live.active = false
   live.tools = []
   live.citations = []
   live.retrieval = null
   live.hint = null
   live.done = null
   try {
-    sessions.value = await chatApi.sessions()
-    if (activeId.value && !sessions.value.some((s) => s.id === activeId.value)) {
-      activeId.value = null
-    }
+    const list = await chatApi.sessions()
+    const current = (list || []).find((item) => item.id === sessionId)
+    if (current) activeSession.value = current
   } catch {
-    // 列表刷新失败不影响本轮回答
+    // 会话信息刷新失败不影响本轮回答
   }
 }
 
@@ -516,6 +421,21 @@ function stopAsk() {
     askController.abort()
     askController = null
     notice.value = '已停止生成，本轮回答未保存'
+  }
+}
+
+async function onClear() {
+  if (!activeSession.value || live.running) return
+  if (!confirm('清空当前会话的全部历史消息，系统提示与工具保持不变。确认？')) return
+  const sessionId = activeSession.value.id
+  try {
+    const view = await chatApi.clear(sessionId)
+    messages.value = []
+    Object.assign(live, { active: false, running: false, answer: '', retrieval: null, tools: [], citations: [], hint: null, clarify: [], done: null })
+    if (view) activeSession.value = { ...activeSession.value, title: view.title || '新会话', msgCount: view.msgCount ?? 0 }
+    notice.value = '上下文已清空，继续提问即可'
+  } catch (e) {
+    notice.value = `清理失败：${e.message}`
   }
 }
 
@@ -544,7 +464,7 @@ async function openChunk(citation) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadDepts(), loadSessions()])
+  await ensureSession()
 })
 
 onBeforeUnmount(() => {
@@ -553,12 +473,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.head-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .notice {
   display: flex;
   align-items: center;
@@ -575,91 +489,9 @@ onBeforeUnmount(() => {
 
 .layout {
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
-}
-
-.side {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: calc(100vh - 190px);
-  overflow: auto;
-}
-
-.side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 6px 8px;
-}
-
-.side-head h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.side-empty {
-  padding: 28px 10px;
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.session {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.session:hover {
-  background: #F7F8F9;
-}
-
-.session.active {
-  background: #F2F3F5;
-  border-color: var(--divider);
-}
-
-.session-main {
-  min-width: 0;
-  flex: 1;
-}
-
-.session-title {
-  font-size: 13px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-  color: var(--txt-3);
-  font-size: 11px;
-}
-
-.session-op {
-  flex: none;
-  font-size: 12px;
-  visibility: hidden;
-}
-
-.session:hover .session-op,
-.session.active .session-op {
-  visibility: visible;
 }
 
 .chat {
@@ -682,30 +514,6 @@ onBeforeUnmount(() => {
 .empty-title {
   margin: 0;
   font-size: 15px;
-  color: var(--txt);
-}
-
-.samples {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 16px;
-  width: min(560px, 100%);
-}
-
-.sample {
-  padding: 10px 12px;
-  border: 1px solid var(--divider);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--txt-2);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.sample:hover {
-  border-color: var(--info);
   color: var(--txt);
 }
 
@@ -783,6 +591,110 @@ onBeforeUnmount(() => {
 
 .answer :deep(strong) {
   font-weight: 600;
+}
+
+.answer :deep(em) {
+  font-style: italic;
+}
+
+.answer :deep(h1),
+.answer :deep(h2),
+.answer :deep(h3),
+.answer :deep(h4) {
+  font-weight: 600;
+  margin: 10px 0 6px;
+  line-height: 1.4;
+}
+
+.answer :deep(h1) { font-size: 15px; }
+.answer :deep(h2) { font-size: 14px; }
+.answer :deep(h3) { font-size: 13px; }
+.answer :deep(h4) { font-size: 12px; }
+
+.answer :deep(p) {
+  margin: 4px 0;
+}
+
+.answer :deep(ul),
+.answer :deep(ol) {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.answer :deep(ul) { list-style: disc; }
+.answer :deep(ol) { list-style: decimal; }
+
+.answer :deep(li) {
+  margin: 1px 0;
+}
+
+.answer :deep(li > input[type="checkbox"]) {
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.answer :deep(blockquote) {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--divider);
+  color: var(--txt-2);
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.answer :deep(a) {
+  color: var(--info);
+  text-decoration: underline;
+}
+
+.answer :deep(code) {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.answer :deep(pre) {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: #F6F8FA;
+  border: 1px solid var(--divider);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.answer :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+.answer :deep(table) {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+  width: 100%;
+}
+
+.answer :deep(th),
+.answer :deep(td) {
+  border: 1px solid var(--divider);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.answer :deep(th) {
+  background: #F6F8FA;
+  font-weight: 600;
+}
+
+.answer :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--divider);
+  margin: 10px 0;
 }
 
 .answer :deep(.cite-ref) {
@@ -872,6 +784,45 @@ onBeforeUnmount(() => {
   background: rgba(10, 108, 255, 0.05);
   font-size: 12px;
   color: var(--txt-2);
+}
+
+.clarify-suggestions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(10, 108, 255, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 108, 255, 0.04);
+}
+
+.clarify-label {
+  font-size: 12px;
+  color: var(--txt-2);
+  margin-right: 4px;
+}
+
+.clarify-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(10, 108, 255, 0.3);
+  background: #fff;
+  color: #0a6cff;
+  cursor: pointer;
+  transition: all 0.15s;
+  max-width: 280px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clarify-btn:hover {
+  background: rgba(10, 108, 255, 0.08);
+  border-color: #0a6cff;
 }
 
 .msg-meta {
@@ -966,25 +917,9 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1024px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-
-  .side,
-  .chat {
-    max-height: none;
-  }
-
   .chat {
     min-height: 520px;
-  }
-
-  .side {
-    max-height: 260px;
-  }
-
-  .samples {
-    grid-template-columns: 1fr;
+    max-height: none;
   }
 }
 </style>

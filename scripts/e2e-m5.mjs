@@ -1,4 +1,4 @@
-// M5 浏览器端到端：会话助手、评价证据、建议详情与按角色导航。
+// M5 浏览器端到端：工单助手、评价证据、建议详情与按角色导航。
 // 前置：后端 8090 与前端 dev server 5180 已启动（web 目录 npm run dev），数据库有种子数据，
 //       且已跑过 scripts/acceptance-m5.sh（评价与建议队列有数据）。
 // 运行：node scripts/e2e-m5.mjs
@@ -6,8 +6,8 @@
 //   PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core
 //   CHROME_PATH=/path/to/Chromium.app/Contents/MacOS/Chromium
 //   BASE=http://localhost:5180  OUT=/tmp/tracelink-m5
-// 副作用：会用 admin/xuwei/wangxb 各建/用一个会话并归档一条；会话标题取自首问，
-//   清理：mysql -uroot -ptracelink tracelink -e "delete m from chat_message m join chat_session s
+// 副作用：会用 admin/xuwei/wangxb 各用一个会话（单会话，首次进入自动创建，不新建、不归档）；
+//   会话标题取自首问，清理：mysql -uroot -ptracelink tracelink -e "delete m from chat_message m join chat_session s
 //   on m.session_id=s.id where s.title like '生产部这周%' or s.title like '张厚生现在手里%';
 //   delete from chat_session where title like '生产部这周%' or title like '张厚生现在手里%';"
 // 说明：未配置 ARK_API_KEY 时回答走规则降级，脚本会断言「降级」标记；配置后仍可跑，只是不再要求降级标签。
@@ -70,26 +70,27 @@ async function ask(text) {
   await page.waitForFunction((n) => document.querySelectorAll('.msg-assistant .bubble').length > n
     || (document.querySelector('.notice')?.textContent || '').includes('提问失败')
     || (document.querySelector('.notice')?.textContent || '').includes('TL-'), before, { timeout: 20000 })
-  await page.waitForTimeout(700)
+  // 等流式气泡收尾（回答落库后 live 清空），避免把临时气泡算进历史条数
+  await page.waitForFunction(() => document.querySelectorAll('.streaming').length === 0, { timeout: 20000 })
+  await page.waitForTimeout(300)
 }
 
 try {
   // ---------------------------------------------------------------- 管理员
   await login('admin', 'admin123')
   const navTitles = await page.locator('.nav-text').allInnerTexts()
-  check('侧栏出现会话助手', navTitles.includes('会话助手'), navTitles.join('/'))
-  check('侧栏出现复盘与建议', navTitles.includes('复盘与建议'), navTitles.join('/'))
+  check('侧栏出现工单助手', navTitles.includes('工单助手'), navTitles.join('/'))
+  check('侧栏不再出现重点发现', !navTitles.includes('重点发现'), navTitles.join('/'))
   check('侧栏没有阶段占位徽标', await page.locator('.nav-phase').count() === 0)
 
-  // ---------------------------------------------------------------- 会话
+  // ---------------------------------------------------------------- 单会话
   await gotoChat()
   await page.waitForSelector('.chat-head', { timeout: 15000 })
-  const beforeSessions = await page.locator('.session').count()
-  await page.click('.page-head .btn')
-  await page.waitForTimeout(800)
-  const afterSessions = await page.locator('.session').count()
-  check('新建会话进入列表', afterSessions >= Math.max(1, beforeSessions), `${beforeSessions} -> ${afterSessions}`)
-  check('新会话标题为默认或首问', (await page.locator('.chat-title').innerText()).trim().length > 0)
+  check('工单助手不再有会话列表', await page.locator('.session').count() === 0)
+  check('工单助手不再有新建会话按钮',
+    await page.locator('.page-head .btn', { hasText: '新建会话' }).count() === 0)
+  check('默认保持一条会话标题', (await page.locator('.chat-title').innerText()).trim().length > 0)
+  check('输入区不再有部门与类型下拉', await page.locator('.composer-bar select').count() === 0)
 
   await ask('生产部这周还有几张单没验收？')
   const tools = await page.locator('.msg-assistant .tool').count()
@@ -120,15 +121,15 @@ try {
     check('引用可回溯原文（本轮无引用跳过）', true, '无命中')
   }
 
-  // 归档
-  await page.locator('.chat-head .btn').click()
-  await page.waitForTimeout(800)
-  const archivedTag = await page.locator('.session.active .tag-warn').count()
-  const sendDisabled = await page.locator('.composer .btn-primary').isDisabled()
-  check('归档后会话标记已归档', archivedTag === 1)
-  check('归档后不能再发送', sendDisabled)
-  check('归档后输入区提示', (await page.locator('.composer textarea').getAttribute('placeholder')).includes('归档'))
-  await page.screenshot({ path: `${SHOTS}/02-chat-archived.png`, fullPage: true })
+  // 单会话续用：刷新页面后仍落在同一条会话，历史与消息还在
+  const titleBefore = (await page.locator('.chat-title').innerText()).trim()
+  const msgBefore = await page.locator('.msg-assistant .bubble').count()
+  await page.reload()
+  await page.waitForSelector('.chat-head', { timeout: 20000 })
+  const titleAfter = (await page.locator('.chat-title').innerText()).trim()
+  const msgAfter = await page.locator('.msg-assistant .bubble').count()
+  check('刷新后仍是同一条会话', titleAfter === titleBefore, titleAfter)
+  check('会话历史持续保留', msgAfter >= msgBefore, `${msgBefore} -> ${msgAfter}`)
 
   // ---------------------------------------------------------------- 复盘与建议
   await page.goto(`${BASE}/#/stats/review`)
@@ -175,7 +176,7 @@ try {
   // ---------------------------------------------------------------- 负责人
   await login('xuwei', 'admin123')
   const ownerNav = await page.locator('.nav-text').allInnerTexts()
-  check('负责人可见复盘与建议', ownerNav.includes('复盘与建议'), ownerNav.join('/'))
+  check('负责人侧栏不再出现重点发现', !ownerNav.includes('重点发现'), ownerNav.join('/'))
   await page.goto(`${BASE}/#/stats/review`)
   await page.waitForSelector('.block-head h3', { timeout: 15000 })
   await page.waitForSelector('.sug, .empty', { timeout: 15000 })
@@ -189,12 +190,10 @@ try {
   // ---------------------------------------------------------------- 执行者
   await login('wangxb', 'admin123')
   const execNav = await page.locator('.nav-text').allInnerTexts()
-  check('执行者没有复盘与建议', !execNav.includes('复盘与建议'), execNav.join('/'))
-  check('执行者可见会话助手', execNav.includes('会话助手'))
+  check('执行者没有重点发现', !execNav.includes('重点发现'), execNav.join('/'))
+  check('执行者可见工单助手', execNav.includes('工单助手'))
   await gotoChat()
   await page.waitForSelector('.chat-head', { timeout: 15000 })
-  await page.click('.page-head .btn')
-  await page.waitForTimeout(700)
   await ask('生产部这周还有几张单没验收？')
   const execToolTitles = await page.locator('.msg-assistant .tool').evaluateAll((els) => els.map((e) => e.getAttribute('title') || ''))
   check('执行者越权部门被裁剪', execToolTitles.join('|').includes('"clamped":true'), execToolTitles.join('|').slice(0, 160))
